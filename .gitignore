@@ -1,0 +1,32 @@
+# Build artifacts
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+
+# Go
+vendor/
+
+# Node / frontend
+node_modules/
+web/dist/
+web/.svelte-kit/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Local config & secrets
+config.local.yaml
+*.local.toml
+.env
+.env.*
+!.env.example
+
+# Runtime data
+data/
+sessions/
+*.log
