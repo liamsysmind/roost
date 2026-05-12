@@ -95,7 +95,10 @@
   function go() {
     const name = sanitizeName(nameEl.value);
     const id = name || makeID();
-    location.href = '/s/' + encodeURIComponent(id);
+    window.open('/s/' + encodeURIComponent(id), '_blank', 'noopener');
+    nameEl.value = '';
+    // Give the new session a moment to register before refreshing the list.
+    setTimeout(load, 400);
   }
 
   newBtn.addEventListener('click', go);
