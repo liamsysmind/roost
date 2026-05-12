@@ -1,71 +1,152 @@
 # roost
 
-A self-hosted workspace where your AI agents come to roost.
+**A self-hosted browser workspace for terminal-first AI coding.**
 
-`roost` runs as a single binary on your dev box. Open any browser, connect over
-SSH tunnel (or your private network), and you get a unified workspace:
+Install one binary on your dev box. SSH-tunnel it. Open a browser. You get a
+real terminal, a file tree, and a panel that watches your Claude Code
+session — all in one page, on every device you own.
 
-- **Persistent shells.** Real tmux-backed sessions that survive WebSocket
-  disconnects, server restarts, even idle timeouts. Close the laptop, come
-  back tomorrow, the build is still running.
-- **Right-side file tree.** Browse, download, drag-and-drop upload, mkdir,
-  rename, delete — straight from the terminal page, no second app.
-- **AI cost panel.** Pulls today's Claude Code spend from `~/.claude/` and
-  stamps it on the top bar. Tooltip breaks down tokens by category.
-- **Push notifications.** SSE stream → Web Notification API toast. Wire your
-  Claude Code Stop hook to `roost hook-info`'s snippet and your laptop pings
-  when an agent stops waiting for you.
-- **Multi-session, multi-tab.** Each browser tab is its own named session.
-  Two tabs on the same session = live shared screen.
+- **Terminal that survives disconnects.** Backed by `tmux` under the hood,
+  so closing your laptop, switching networks, or restarting the server
+  doesn't kill your running build or your in-flight agent.
+- **File tree next to the terminal.** Click to preview. Drag-drop or
+  Ctrl+V from your OS to upload. Click a file to download.
+- **AI session at a glance.** Live model name, context-window usage, and
+  every prompt you've sent — click one to scroll the terminal back to it.
+- **Multi-session, multi-tab.** Each browser tab is its own named shell.
+  Open two tabs on the same session to share the same screen with yourself.
+- **No cloud. No subscription. No account.** One process, one user,
+  one binary.
 
-> Status: pre-alpha, single-user, designed for SSH-tunnel-first deployment.
+> Status: pre-1.0, single-user, designed for SSH-tunnel deployment.
+> Pricing/cost tracking is deliberately not built in — API rates shift and
+> subscription plans bill differently; only token counts are surfaced.
 
-## Quickstart
+---
 
-### 1. Requirements
+## Quick start
 
-- Go 1.23+ (only for building from source)
-- `tmux` 3.0+ (required at runtime; roost refuses to start without it)
-- A modern browser
+### Requirements
 
-### 2. Build & install
+- Linux or macOS host with `tmux` ≥ 3.0 (required at runtime — `roost`
+  refuses to start without it: `apt install tmux` / `brew install tmux`).
+- A modern browser on whatever you SSH from.
+- Go 1.23+ if you're building from source. Prebuilt binaries: see
+  [Releases](https://github.com/liamsysmind/roost/releases).
+
+### Install
 
 ```bash
 git clone https://github.com/liamsysmind/roost && cd roost
-make
-sudo make install            # installs to /usr/local/bin/roost
+make                       # builds ./roost
+sudo make install          # installs /usr/local/bin/roost  (optional)
 ```
 
-Or cross-compile prebuilt binaries for every supported target:
+Or grab a binary for your target:
 
 ```bash
-make cross                   # writes dist/roost-VERSION-OS-ARCH
+make cross                 # writes dist/roost-<version>-<os>-<arch>
 ```
 
-### 3. One-time setup
+### One-time setup
 
 ```bash
-roost setup                  # interactive: prompts for a password
-# or non-interactive:
+roost setup
+# (prompts for a password; writes ~/.config/roost/config.toml)
+```
+
+Or non-interactive:
+
+```bash
 echo 'your-password' | roost setup --password-stdin
 ```
 
-Writes `~/.config/roost/config.toml` with the password hash, session secret,
-and hook secret. Defaults are sane — edit only if you need a different listen
-address, log dir, or filesystem root.
+`setup` picks a free port automatically (default 8080, falls back to 8081…
+if taken) and writes the chosen address into the config along with a
+bcrypt password hash, a session secret, and a hook secret.
 
-### 4. Run
+### Run
 
 ```bash
 roost serve
+# → roost listening on http://127.0.0.1:8080
 ```
 
-Listens on `127.0.0.1:8080` — the SSH-tunnel-first default. From your laptop:
+`roost` binds to loopback only. You reach it from your laptop with an
+SSH tunnel:
 
 ```bash
 ssh -L 8080:localhost:8080 user@your-dev-box
-# Then open http://localhost:8080 in your browser.
 ```
+
+Open <http://localhost:8080> in your browser, sign in with the password
+you set. Done.
+
+---
+
+## What you get
+
+### Sessions
+
+The home page is a session picker. Type a memorable name (or leave blank
+for a random ID) and hit **+ New session** to launch a fresh tmux-backed
+shell. Each session is a separate URL like `/s/zephyr-build`, so:
+
+- closing the tab doesn't kill the shell
+- coming back to the URL re-attaches you to the same screen
+- you can rename or delete sessions from the home list
+- two tabs on the same URL get the **same** live view — useful for
+  showing the screen to a colleague over a screenshare
+
+### Terminal
+
+A full xterm.js terminal with WebGL rendering and unlimited scrollback
+(persisted to a log file on disk, so reattaching after a server restart
+still shows the conversation you had this morning).
+
+Keyboard ergonomics that match the OS:
+
+- `Ctrl+C` copies selected text, or sends `SIGINT` if nothing is selected
+- `Ctrl+Shift+C` always copies
+- `Ctrl+Shift+V` pastes from clipboard into the shell
+
+### File panel
+
+Right side of the page. Two tabs:
+
+- **Files** — browse, preview, upload, download, rename, delete.
+  - Click a file to **preview** it inline (images, video, audio, PDF,
+    text — auto-detected from MIME type).
+  - The tree follows the terminal's `cd` automatically.
+  - **Drag-drop** anywhere on the page or **Ctrl+V** from your OS to
+    upload. Status line shows the destination path so there's no
+    "where did my file go".
+  - Click a file row or the ↓ icon to download. Progress bar on big files.
+  - Uploads stream straight to disk — no `/tmp` buffering, no memory
+    blow-up, no 1 GB cap.
+- **AI** — live view of the Claude Code session running in the
+  terminal's current directory.
+  - Model name, context tokens used / window estimate, message count,
+    and token breakdown.
+  - List of every prompt you've sent; click one to scroll the terminal
+    scrollback back to that point.
+  - Auto-refreshes; clears when you `cd` to a directory without a
+    Claude project.
+
+### Notifications
+
+Browser push notifications via Server-Sent Events:
+
+```bash
+roost hook-info
+```
+
+…prints a ready-to-paste snippet for `~/.claude/settings.json`. Once
+configured, Claude Code's `Stop` hook fires a notification to your
+browser whenever an agent stops waiting for input — your laptop pings,
+even if you're in a different tab.
+
+---
 
 ## Configuration
 
@@ -93,45 +174,35 @@ root = ""                     # default: your home directory.
                               #   /api/fs/* operations are contained here.
 ```
 
-## Wiring up notifications
+---
 
-Get the ready-to-paste snippet:
+## Multi-user on one machine
 
-```bash
-roost hook-info
-```
-
-It prints a JSON block to add to `~/.claude/settings.json`. Once configured,
-Claude Code's `Stop` hook fires a curl POST to `roost`, which fan-outs over
-SSE to every connected browser. Native OS toast lights up.
-
-## Shared machine, separate instances
-
-roost is deliberately **single-user**. If two people use the same Linux box,
-each runs their own `roost serve` on a different port, with their own config,
-their own session logs, their own AI dashboard.
+`roost` is deliberately single-user per instance. If two people share a
+host, they each run their own `roost` on a different port — UNIX UIDs
+do the isolation, the binary stays simple.
 
 ```
-[ shared linux box ]
+[ shared linux host ]
 
   alice (UID 1001)                         bob (UID 1002)
    ~/.config/roost/config.toml              ~/.config/roost/config.toml
    ~/.local/share/roost/sessions/           ~/.local/share/roost/sessions/
    roost serve --addr 127.0.0.1:8081        roost serve --addr 127.0.0.1:8082
-                                            
+
    from her laptop:                         from his laptop:
    ssh -L 8081:localhost:8081 alice@host    ssh -L 8082:localhost:8082 bob@host
    open http://localhost:8081               open http://localhost:8082
 ```
 
-UNIX UIDs do the isolation — alice's roost runs as `alice`, can only touch
-her files, sees only her tmux sessions, reads only her `~/.claude/`. roost
-does not impersonate or share state across users. Pick a distinct port per
-user (override via `[server] addr` in each user's config or `--addr` flag).
+Each `roost` runs as its own user, sees only its own home / `tmux` /
+`~/.claude/`. No state crosses between them.
 
-## Deploying as a service
+---
 
-### Linux (systemd, user unit)
+## Running as a service
+
+### Linux (systemd user unit)
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -147,30 +218,42 @@ cp dist/launchd/com.liamsysmind.roost.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.liamsysmind.roost.plist
 ```
 
-## What this isn't
+---
 
-- **Not multi-tenant — and never will be.** One binary serves one person.
-  Two people on the same machine = two independent instances on different
-  ports. UNIX UIDs handle isolation; roost stays simple.
-- **Not exposed to the internet by default.** It binds to `127.0.0.1`. You
-  reach it via SSH tunnel or your private network (Tailscale, ZeroTier, …).
-- **Not VS Code.** No editor pane. The file tree is for transferring artifacts;
-  edit files with whatever editor you run inside the terminal.
+## What roost isn't
 
-## Why does this exist
+- **Not multi-tenant — and never will be.** Two people = two instances.
+  Multi-user accounting belongs in a deployment-layer hub, not in this
+  codebase.
+- **Not exposed to the internet by default.** Loopback only. Reach it
+  via SSH tunnel, Tailscale, ZeroTier, WireGuard — your call.
+- **Not an editor.** The file tree is for moving artifacts in and out.
+  Edit files with whatever editor you run inside the terminal.
+- **Not a Claude Code clone.** It surfaces what Claude Code already
+  records on disk; it doesn't run the agent itself.
+- **No usage cost in dollars.** API prices shift, subscription plans
+  bill differently. Token counts are shown — interpret them with your
+  own price sheet.
+
+---
+
+## Why this exists
 
 Existing tools didn't fit:
 
 - **Warp** — cloud subscription, not self-hosted.
 - **Cursor / Windsurf** — IDE-centric, not terminal-first.
-- **ttyd / gotty / Wetty** — terminal only, no files, no AI integration.
-- **filebrowser** — file management only.
+- **ttyd / gotty / Wetty** — terminal only, no file management,
+  no AI awareness.
+- **filebrowser** — file management only, no terminal.
 - **Tabby / Wave** — desktop apps, native install per OS.
 - **code-server** — VS Code in a browser; great, but VS Code-shaped.
 
-There was no "terminal + file tree + AI dashboard, web-based, self-hosted"
-option. So this exists.
+`roost` is the missing intersection: terminal + file tree + AI panel,
+self-hosted on your own machine, accessed through any browser.
+
+---
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+[MIT](LICENSE).
