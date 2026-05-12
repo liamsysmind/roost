@@ -70,7 +70,7 @@
       const item = document.createElement('div');
       item.className = 'item';
       item.innerHTML = `
-        <a class="link" href="/s/${encodeURIComponent(s.id)}">
+        <a class="link" href="/s/${encodeURIComponent(s.id)}" target="_blank" rel="noopener">
           <div class="row">
             <span class="id ${s.closed ? 'closed' : ''}">${s.id}${s.closed ? ' (closed)' : ''}</span>
             <span class="meta">${s.clients}↔ · ${fmtSize(s.log_size_bytes)} · ${fmtAgo(s.last_used)}</span>
