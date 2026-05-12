@@ -59,6 +59,7 @@ func (s *Server) setupRoutes() {
 	mux.HandleFunc("GET /ws/terminal/{id}", wsh.Serve)
 
 	mux.HandleFunc("GET /api/sessions", s.handleSessionsList)
+	mux.HandleFunc("GET /api/sessions/{id}/cwd", s.handleSessionCwd)
 	mux.HandleFunc("POST /api/sessions/{id}/rename", s.handleSessionRename)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleSessionDelete)
 
@@ -194,6 +195,17 @@ func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleSessionCwd(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	cwd, err := s.Sessions.Cwd(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"cwd": cwd})
 }
 
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {

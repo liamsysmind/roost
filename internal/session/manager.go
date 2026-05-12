@@ -95,6 +95,24 @@ func (m *Manager) killTmuxSession(id string) {
 	_ = exec.Command("tmux", "-f", m.tmuxConfPath, "kill-session", "-t", "="+id).Run()
 }
 
+// Cwd asks tmux for the active pane's current working directory.
+// Works without shell integration: tmux derives cwd from the foreground
+// process's /proc/<pid>/cwd. We avoid the "=" exact-match prefix because
+// display-message returns empty for it (unlike has-session / kill-session).
+func (m *Manager) Cwd(id string) (string, error) {
+	if err := ValidateID(id); err != nil {
+		return "", err
+	}
+	out, err := exec.Command("tmux",
+		"-f", m.tmuxConfPath,
+		"display-message", "-t", id,
+		"-p", "#{pane_current_path}").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // GetOrCreate returns the named session, attaching to the tmux session of the
 // same name (creating it if it doesn't exist).
 func (m *Manager) GetOrCreate(id string) (*Session, error) {

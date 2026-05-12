@@ -278,11 +278,47 @@
     fsEl.style.flexBasis = w + 'px';
   });
 
+  // --- cwd sync: follow the terminal session's pane_current_path ---
+  // Only active on /s/{id} pages; home page leaves this alone.
+  function sessionIdFromPath() {
+    const m = location.pathname.match(/^\/s\/([^\/?#]+)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+
+  function relToRoot(abs) {
+    if (!abs.startsWith(rootAbs)) return null;
+    let rel = abs.slice(rootAbs.length).replace(/^\/+/, '');
+    return rel;
+  }
+
+  let cwdSyncEnabled = true;
+  let lastCwdServer = '';
+  async function syncCwd() {
+    const sid = sessionIdFromPath();
+    if (!sid || !cwdSyncEnabled) return;
+    try {
+      const r = await fetch('/api/sessions/' + encodeURIComponent(sid) + '/cwd');
+      if (!r.ok) return;
+      const data = await r.json();
+      const abs = (data.cwd || '').trim();
+      if (!abs || abs === lastCwdServer) return;
+      lastCwdServer = abs;
+      const rel = relToRoot(abs);
+      if (rel === null) return; // outside file panel root — ignore quietly
+      if (rel === cwd) return;
+      cwd = rel;
+      expanded.clear();
+      refresh();
+    } catch (_) {}
+  }
+
   (async function init() {
     try {
       const r = await fetch('/api/fs/root');
       if (r.ok) rootAbs = (await r.json()).root;
     } catch (_) {}
-    refresh();
+    await refresh();
+    syncCwd();
+    setInterval(syncCwd, 2000);
   })();
 })();
