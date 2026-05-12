@@ -5,15 +5,16 @@
 // rolling context tokens, recent user prompts. Click a prompt to jump
 // the terminal scrollback to where it appeared.
 (() => {
-  const modelTag   = document.getElementById('ai-model');
-  const ctxTag     = document.getElementById('ai-ctx');
-  const projectEl  = document.getElementById('ai-project');
-  const modelFull  = document.getElementById('ai-model-full');
-  const ctxDetail  = document.getElementById('ai-ctx-detail');
-  const ctxFill    = document.getElementById('ai-ctx-fill');
-  const costDetail = document.getElementById('ai-cost-detail');
-  const promptsEl  = document.getElementById('ai-prompts');
-  const badgeEl    = document.getElementById('ai-tab-badge');
+  const modelTag    = document.getElementById('ai-model');
+  const ctxTag      = document.getElementById('ai-ctx');
+  const projectEl   = document.getElementById('ai-project');
+  const modelFull   = document.getElementById('ai-model-full');
+  const ctxDetail   = document.getElementById('ai-ctx-detail');
+  const ctxFill     = document.getElementById('ai-ctx-fill');
+  const msgsDetail  = document.getElementById('ai-msgs-detail');
+  const tokensDetail = document.getElementById('ai-tokens-detail');
+  const promptsEl   = document.getElementById('ai-prompts');
+  const badgeEl     = document.getElementById('ai-tab-badge');
 
   function shortModel(m) {
     if (!m) return '—';
@@ -24,12 +25,6 @@
     if (n < 1000) return String(n);
     if (n < 1_000_000) return (n / 1000).toFixed(1) + 'K';
     return (n / 1_000_000).toFixed(2) + 'M';
-  }
-  function fmtUSD(n) {
-    if (n == null) return '—';
-    if (n >= 100) return '$' + n.toFixed(0);
-    if (n >= 10)  return '$' + n.toFixed(1);
-    return '$' + n.toFixed(2);
   }
 
   async function refresh() {
@@ -44,7 +39,8 @@
         modelFull.textContent = '—';
         ctxDetail.textContent = '—';
         ctxFill.style.width = '0%';
-        costDetail.textContent = '—';
+        msgsDetail.textContent = '—';
+        tokensDetail.textContent = '—';
         promptsEl.innerHTML = '<div class="empty">no active Claude Code session</div>';
         if (badgeEl) { badgeEl.hidden = true; }
         return;
@@ -61,12 +57,11 @@
       modelFull.textContent  = j.model || '—';
       ctxDetail.textContent  = `${fmtK(ctx)} / ${fmtK(win)} (${pct.toFixed(1)}%)`;
       ctxFill.style.width    = pct.toFixed(1) + '%';
-      const longTurns = (j.usage && j.usage.long_context_turns) || 0;
-      const costLine = fmtUSD(j.usage && j.usage.cost_usd) + ' est.';
-      costDetail.textContent = longTurns > 0
-        ? `${costLine} · ${longTurns} long-ctx turn${longTurns === 1 ? '' : 's'}`
-        : costLine;
-      costDetail.title = 'Estimate — bills 5m/1h cache writes separately, applies 2× when a turn exceeds 200K context. Excludes priority/batch tier discounts.';
+      const u = j.usage || {};
+      msgsDetail.textContent = String(u.messages || 0);
+      tokensDetail.textContent =
+        `in ${fmtK(u.input_tokens)} · out ${fmtK(u.output_tokens)} · ` +
+        `cache write ${fmtK(u.cache_write_tokens)} · cache read ${fmtK(u.cache_read_tokens)}`;
 
       const prompts = j.prompts || [];
       if (prompts.length === 0) {
