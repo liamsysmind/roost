@@ -65,14 +65,17 @@
         body: 'to=' + encodeURIComponent(to),
       });
       if (!r.ok) {
-        alert('rename failed: ' + (await r.text()).trim());
+        const msg = 'Rename failed: ' + (await r.text()).trim();
+        window.toast ? window.toast(msg, 'err') : alert(msg);
         return;
       }
       sessionID = to;
       refreshSessionUI();
       history.replaceState(null, '', '/s/' + encodeURIComponent(to));
+      window.toast && window.toast(`Renamed to ${to}`, 'ok');
     } catch (e) {
-      alert('rename failed: ' + e.message);
+      const msg = 'Rename failed: ' + e.message;
+      window.toast ? window.toast(msg, 'err') : alert(msg);
     }
   });
 
