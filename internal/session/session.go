@@ -69,6 +69,14 @@ func newSession(id string, cfg Config, tmuxConfPath string, tmuxAlreadyExists bo
 		}
 	}
 
+	// New sessions start in $HOME regardless of where roost was launched.
+	// -c is ignored on attach (the existing pane keeps its own cwd), so
+	// resuming an old session doesn't get reset.
+	startDir, err := os.UserHomeDir()
+	if err != nil || startDir == "" {
+		startDir = "/"
+	}
+
 	// Spawn tmux. -A on new-session means "attach if exists, create otherwise".
 	// We pass the shell explicitly so a brand-new tmux session uses our chosen
 	// login shell instead of whatever tmux's default-shell points at.
@@ -76,6 +84,7 @@ func newSession(id string, cfg Config, tmuxConfPath string, tmuxAlreadyExists bo
 		"-f", tmuxConfPath,
 		"new-session", "-A",
 		"-s", id,
+		"-c", startDir,
 		"-x", "200", "-y", "50",
 		"--", shell, "-l",
 	)
