@@ -61,6 +61,19 @@ Run:
 # Listens on 127.0.0.1:8080. Access via SSH tunnel.
 ```
 
+## Design philosophy — non-negotiable
+
+**roost is single-user per instance, forever.** If multiple people share a
+machine, each runs their own `roost serve` on a different port with their
+own `~/.config/roost/` and `~/.local/share/roost/`. UNIX UIDs handle the
+isolation; we do not.
+
+Do not add user databases, role-based auth, per-user data partitions, or
+"workspace" sharing within a single roost process. Anything that smells
+like "let's make roost serve multiple identities" should instead push that
+concern up to the deployment layer (a separate hub component, reverse
+proxy, etc.) rather than into this codebase.
+
 ## Key design decisions
 
 - **tmux is required.** Each session is `tmux new-session -A -s {id}`. Shell
