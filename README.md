@@ -115,8 +115,16 @@ Keyboard ergonomics that match the OS:
 Right side of the page. Two tabs:
 
 - **Files** — browse, preview, upload, download, rename, delete.
-  - Click a file to **preview** it inline (images, video, audio, PDF,
-    text — auto-detected from MIME type).
+  - Click a file to **preview** it inline. Content type is auto-detected
+    from MIME (with fallback byte-sniffing for extensionless files):
+    - **Markdown** (`.md`, `.markdown`, …) → rendered HTML with
+      tables, blockquotes, links, images
+    - **Source code** (Go, Python, Rust, C/C++, Java, JS/TS, shell,
+      JSON/YAML/TOML, HTML/CSS, SQL, Dockerfile, Makefile, and 20+
+      more) → syntax highlighting (GitHub Dark theme)
+    - **Images / video / audio / PDF** → native browser rendering
+    - **Plain text / unknown** → monospace block
+    - **Binary** → "use download to save" hint
   - The tree follows the terminal's `cd` automatically.
   - **Drag-drop** anywhere on the page or **Ctrl+V** from your OS to
     upload. Status line shows the destination path so there's no
