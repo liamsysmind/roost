@@ -544,7 +544,13 @@
       const data = await r.json();
       const abs = (data.cwd || '').trim();
       if (!abs || abs === lastCwdServer) return;
+      const prev = lastCwdServer;
       lastCwdServer = abs;
+      // Tell other panels (AI tab) so they can re-resolve immediately
+      // instead of waiting for their own poll tick.
+      window.dispatchEvent(new CustomEvent('roost-cwd-changed', {
+        detail: { previous: prev, current: abs },
+      }));
       const rel = relToRoot(abs);
       if (rel === null) return; // outside file panel root — ignore quietly
       if (rel === cwd) return;

@@ -126,6 +126,13 @@
   modelTag.addEventListener('click', () => setTab('ai'));
   ctxTag.addEventListener('click', () => setTab('ai'));
 
+  // fs.js fires this whenever the terminal's tmux cwd changes — refresh
+  // immediately so the AI panel doesn't keep showing the previous
+  // project's data after the user cd's away.
+  window.addEventListener('roost-cwd-changed', refresh);
+
   refresh();
-  setInterval(refresh, 15000);
+  // Backup poll — handles cases where the cwd event didn't fire
+  // (e.g. session created after page load).
+  setInterval(refresh, 5000);
 })();
