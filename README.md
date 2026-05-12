@@ -39,7 +39,33 @@ option. So this exists.
 
 ## Quickstart
 
-_Coming soon — see [milestones](#milestones)._
+```bash
+# 1. Build
+git clone https://github.com/liamsysmind/roost && cd roost
+go build -o roost ./cmd/roost
+
+# 2. One-time setup: password + session secret → ~/.config/roost/config.toml
+./roost setup
+# (or non-interactive)
+echo 'your-password' | ./roost setup --password-stdin
+
+# 3. Run (binds 127.0.0.1:8080 by default — only reachable via SSH tunnel)
+./roost serve
+```
+
+From your laptop:
+```bash
+ssh -L 8080:localhost:8080 user@your-dev-box
+# Then open http://localhost:8080 in your browser.
+```
+
+### Feature scope today (W1)
+
+- Password-gated single-user login
+- Cookie session (in-memory, 24h TTL)
+- Full xterm.js terminal connected to a PTY on the server
+- WebGL renderer + window resize
+- Binds to `127.0.0.1` only — designed for SSH tunnel deployment
 
 ## Milestones
 
