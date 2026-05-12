@@ -162,9 +162,8 @@ even if you're in a different tab.
 
 ```toml
 [auth]
-password_hash  = "..."        # bcrypt; rewrite via `roost setup --force`
-session_secret = "..."        # used to mint session ids; rotate to log everyone out
-hook_secret    = "..."        # required header on POST /api/notify
+password_hash = "..."         # bcrypt; rewrite via `roost setup --force`
+hook_secret   = "..."         # required header on POST /api/notify
 
 [server]
 addr = "127.0.0.1:8080"       # bind here; SSH tunnel into it
@@ -217,6 +216,54 @@ mkdir -p ~/.config/systemd/user
 cp dist/systemd/roost.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now roost
+```
+
+The shipped unit assumes `roost` is installed at `/usr/local/bin/roost`
+(via `sudo make install`). If you can't or don't want to use sudo,
+symlink the binary into your home and override the unit:
+
+```bash
+mkdir -p ~/.local/bin ~/.config/systemd/user
+ln -sf "$(pwd)/roost" ~/.local/bin/roost
+
+cat > ~/.config/systemd/user/roost.service <<'EOF'
+[Unit]
+Description=roost — self-hosted workspace for AI agents
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/roost serve
+Restart=on-failure
+RestartSec=3s
+
+[Install]
+WantedBy=default.target
+EOF
+
+systemctl --user daemon-reload
+systemctl --user enable --now roost
+```
+
+**Enable linger** so the service survives logout (this is the bit
+most people miss — a user-mode systemd unit dies the moment your last
+SSH session closes):
+
+```bash
+sudo loginctl enable-linger $USER
+loginctl show-user $USER | grep Linger   # Linger=yes
+```
+
+After this, `roost` is up across reboots, regardless of whether
+anyone is logged in.
+
+Useful commands:
+
+```bash
+systemctl --user status roost            # current state
+systemctl --user restart roost           # restart (e.g. after rebuilding)
+journalctl --user -u roost -f            # tail the log
+journalctl --user -u roost -n 100        # last 100 lines
 ```
 
 ### macOS (launchd)
