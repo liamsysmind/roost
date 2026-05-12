@@ -100,6 +100,18 @@
       border-top: 1px solid #1c1c1c; min-height: 1.2em; }
     #fstatus.err { color: #f88; }
 
+    #fprogress {
+      display: none; padding: 0.45rem 0.7rem;
+      border-top: 1px solid #1c1c1c; background: #0d1418;
+      font-size: 0.7rem; color: #9aa;
+    }
+    #fprogress.active { display: block; }
+    #fprogress .row { display: flex; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.25rem; }
+    #fprogress .label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #fprogress .meta { color: #6a8; font-family: ui-monospace, monospace; white-space: nowrap; }
+    #fprogress .bar { background: #1a1a1a; height: 5px; border-radius: 3px; overflow: hidden; }
+    #fprogress .fill { background: linear-gradient(90deg, #4caf80, #5cbf90); height: 100%; width: 0%; transition: width 0.1s linear; }
+
     /* preview modal */
     #preview {
       position: fixed; inset: 0; display: none;
@@ -172,6 +184,10 @@
         <button id="frefresh" title="refresh">↻</button>
       </div>
       <div id="ftree"></div>
+      <div id="fprogress">
+        <div class="row"><span class="label"></span><span class="meta"></span></div>
+        <div class="bar"><div class="fill"></div></div>
+      </div>
       <div id="fstatus">drag files here →</div>
       <div id="fdrop"><span id="fdrop-text">drop to upload here</span></div>
     </div>
