@@ -7,7 +7,7 @@ Use one of:
 
 - GitHub's private vulnerability reporting:
   <https://github.com/liamsysmind/roost/security/advisories/new>
-- Email: <william.lee3438@gmail.com>
+- Email: <261377939+liamsysmind@users.noreply.github.com>
 
 You'll get an acknowledgement within a few days and we'll coordinate
 on a fix and disclosure timeline.
