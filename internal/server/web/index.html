@@ -102,6 +102,7 @@
       <span class="tag" id="session-tag" title="click to copy share URL"></span>
     </div>
     <div class="right">
+      <span id="ai-cost" class="tag" title="Claude Code spend today (click to refresh)" style="color:#cc9;cursor:pointer">$—</span>
       <a href="/" target="_blank" rel="noopener" title="open a new session in a new tab">+ new</a>
       <form method="post" action="/logout" style="margin:0">
         <button type="submit" title="sign out">logout</button>
@@ -127,5 +128,7 @@
   <script src="/vendor/addon-webgl.js"></script>
   <script src="/app.js"></script>
   <script src="/fs.js"></script>
+  <script src="/cost.js"></script>
+  <script src="/notify.js"></script>
 </body>
 </html>

@@ -4,13 +4,17 @@ package server
 import (
 	"embed"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/liamsysmind/roost/internal/ai"
 	"github.com/liamsysmind/roost/internal/auth"
 	rfs "github.com/liamsysmind/roost/internal/fs"
+	"github.com/liamsysmind/roost/internal/notify"
 	"github.com/liamsysmind/roost/internal/session"
 )
 
@@ -18,17 +22,22 @@ import (
 var webFS embed.FS
 
 type Server struct {
-	Auth     *auth.Manager
-	Sessions *session.Manager
-	FS       *rfs.API
-	Addr     string
-	handler  http.Handler
-	static   fs.FS
+	Auth       *auth.Manager
+	Sessions   *session.Manager
+	FS         *rfs.API
+	Notifier   *notify.Notifier
+	HookSecret string
+	Addr       string
+	handler    http.Handler
+	static     fs.FS
 }
 
-func New(a *auth.Manager, sm *session.Manager, fsAPI *rfs.API, addr string) *Server {
+func New(a *auth.Manager, sm *session.Manager, fsAPI *rfs.API, n *notify.Notifier, hookSecret, addr string) *Server {
 	static, _ := fs.Sub(webFS, "web")
-	s := &Server{Auth: a, Sessions: sm, FS: fsAPI, Addr: addr, static: static}
+	s := &Server{
+		Auth: a, Sessions: sm, FS: fsAPI, Notifier: n,
+		HookSecret: hookSecret, Addr: addr, static: static,
+	}
 	s.setupRoutes()
 	return s
 }
@@ -42,6 +51,8 @@ func (s *Server) setupRoutes() {
 	mux.HandleFunc("GET /app.js", s.handleStatic)
 	mux.HandleFunc("GET /home.js", s.handleStatic)
 	mux.HandleFunc("GET /fs.js", s.handleStatic)
+	mux.HandleFunc("GET /cost.js", s.handleStatic)
+	mux.HandleFunc("GET /notify.js", s.handleStatic)
 
 	wsh := &session.Handler{Manager: s.Sessions}
 	mux.HandleFunc("GET /ws/terminal", wsh.Serve)
@@ -52,6 +63,10 @@ func (s *Server) setupRoutes() {
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleSessionDelete)
 
 	(&rfs.Handler{API: s.FS}).Mount(mux)
+	(&ai.Handler{Reader: ai.NewReader()}).Mount(mux)
+
+	mux.HandleFunc("GET /api/notify/stream", s.handleNotifyStream)
+	mux.HandleFunc("POST /api/notify", s.handleNotifyPost)
 
 	mux.HandleFunc("GET /", s.handleHome)
 	mux.HandleFunc("GET /s/{id}", s.handleIndex)
@@ -62,6 +77,13 @@ func (s *Server) setupRoutes() {
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isPublicPath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// POST /api/notify accepts X-Roost-Hook-Secret instead of a cookie,
+		// so local hooks can push notifications without holding a session.
+		if r.Method == http.MethodPost && r.URL.Path == "/api/notify" &&
+			s.HookSecret != "" && r.Header.Get("X-Roost-Hook-Secret") == s.HookSecret {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -191,6 +213,77 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	}
 	_, _ = w.Write(b)
+}
+
+func (s *Server) handleNotifyStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	ch := s.Notifier.Subscribe()
+	defer s.Notifier.Unsubscribe(ch)
+
+	// Send a hello so the client knows the stream is live.
+	fmt.Fprintf(w, "event: hello\ndata: {}\n\n")
+	flusher.Flush()
+
+	tick := time.NewTicker(15 * time.Second)
+	defer tick.Stop()
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case n, ok := <-ch:
+			if !ok {
+				return
+			}
+			data, err := json.Marshal(n)
+			if err != nil {
+				continue
+			}
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		case <-tick.C:
+			// Comment lines act as SSE keep-alives.
+			fmt.Fprintf(w, ": ping\n\n")
+			flusher.Flush()
+		}
+	}
+}
+
+func (s *Server) handleNotifyPost(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	title := strings.TrimSpace(r.FormValue("title"))
+	body := strings.TrimSpace(r.FormValue("body"))
+	if title == "" && body == "" {
+		http.Error(w, "title or body is required", http.StatusBadRequest)
+		return
+	}
+	if title == "" {
+		title = "roost"
+	}
+	source := "hook"
+	if c, err := r.Cookie(auth.CookieName); err == nil && s.Auth.ValidateSession(c.Value) {
+		source = "ui"
+	}
+	s.Notifier.Publish(notify.Notification{
+		Title:   title,
+		Body:    body,
+		Session: r.FormValue("session"),
+		Source:  source,
+	})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) Run() error {

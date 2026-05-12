@@ -17,6 +17,7 @@ import (
 	"github.com/liamsysmind/roost/internal/auth"
 	"github.com/liamsysmind/roost/internal/config"
 	rfs "github.com/liamsysmind/roost/internal/fs"
+	"github.com/liamsysmind/roost/internal/notify"
 	"github.com/liamsysmind/roost/internal/server"
 	"github.com/liamsysmind/roost/internal/session"
 )
@@ -33,6 +34,8 @@ func main() {
 		runServe(os.Args[2:])
 	case "setup":
 		runSetup(os.Args[2:])
+	case "hook-info":
+		runHookInfo(os.Args[2:])
 	case "version":
 		fmt.Println("roost", version)
 	case "-h", "--help", "help":
@@ -48,10 +51,52 @@ func usage() {
 	fmt.Print(`roost — self-hosted workspace for AI agents
 
 Usage:
-  roost setup [--config PATH]      create config with password + session secret
+  roost setup [--config PATH]      create config with password + secrets
   roost serve [--config PATH] [--addr HOST:PORT]
                                    run the HTTP server
+  roost hook-info [--config PATH]  print example Claude Code Stop hook
   roost version
+`)
+}
+
+func runHookInfo(args []string) {
+	fs := flag.NewFlagSet("hook-info", flag.ExitOnError)
+	cfgPath := fs.String("config", config.DefaultPath(), "path to config.toml")
+	_ = fs.Parse(args)
+
+	cfg, err := config.Load(*cfgPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if cfg.Auth.HookSecret == "" {
+		log.Fatal("config has no hook_secret; run `roost setup` to regenerate")
+	}
+	addr := cfg.Server.Addr
+	if addr == "" {
+		addr = "127.0.0.1:8080"
+	}
+	curl := fmt.Sprintf(`curl -sX POST http://%s/api/notify `+
+		`-H "X-Roost-Hook-Secret: %s" `+
+		`-d "title=Claude Code idle" `+
+		`-d "body=Agent stopped, waiting for input" >/dev/null`,
+		addr, cfg.Auth.HookSecret)
+
+	fmt.Print(`# Add to ~/.claude/settings.json to push a notification when Claude Code stops:
+
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "` + curl + `"
+          }
+        ]
+      }
+    ]
+  }
+}
 `)
 }
 
@@ -93,7 +138,9 @@ func runServe(args []string) {
 		log.Fatal(err)
 	}
 
-	log.Fatal(server.New(am, sm, fsAPI, cfg.Server.Addr).Run())
+	n := notify.NewNotifier()
+
+	log.Fatal(server.New(am, sm, fsAPI, n, cfg.Auth.HookSecret, cfg.Server.Addr).Run())
 }
 
 func runSetup(args []string) {
@@ -147,11 +194,16 @@ func runSetup(args []string) {
 	if _, err := rand.Read(secret[:]); err != nil {
 		log.Fatal(err)
 	}
+	var hookSecret [32]byte
+	if _, err := rand.Read(hookSecret[:]); err != nil {
+		log.Fatal(err)
+	}
 
 	cfg := &config.Config{
 		Auth: config.Auth{
 			PasswordHash:  string(hash),
 			SessionSecret: hex.EncodeToString(secret[:]),
+			HookSecret:    hex.EncodeToString(hookSecret[:]),
 		},
 		Server: config.Server{Addr: "127.0.0.1:8080"},
 		Session: config.Session{
