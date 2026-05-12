@@ -332,8 +332,17 @@
       } else if (kind === 'text') {
         const r = await fetch(url);
         const txt = await r.text();
-        pvBodyEl.innerHTML = '<pre></pre>';
-        pvBodyEl.querySelector('pre').textContent = txt;
+        const isMarkdown = /\.(md|markdown|mdown|mkd)$/i.test(name);
+        if (isMarkdown && window.marked) {
+          // Trusted single-user filesystem — render markdown as-is.
+          // If we ever expand to multi-user, swap in DOMPurify here.
+          window.marked.setOptions({ gfm: true, breaks: false });
+          pvBodyEl.innerHTML = '<div class="prose"></div>';
+          pvBodyEl.querySelector('.prose').innerHTML = window.marked.parse(txt);
+        } else {
+          pvBodyEl.innerHTML = '<pre></pre>';
+          pvBodyEl.querySelector('pre').textContent = txt;
+        }
       } else {
         pvBodyEl.innerHTML = '<div class="msg">binary file (' + ct + ') — use ↓ download to save</div>';
       }

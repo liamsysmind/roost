@@ -181,6 +181,41 @@
     #preview .body .msg { color: #aaa; margin: auto; font-size: 0.85rem; text-align: center; padding: 2rem; }
     #preview .body .msg.err { color: #f88; }
 
+    /* Rendered markdown */
+    #preview .body .prose {
+      flex: 1; padding: 1.2rem 1.5rem; color: #d8d8d8;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      font-size: 0.92rem; line-height: 1.6;
+      overflow: auto; max-width: 900px; width: 100%; margin: 0 auto;
+      box-sizing: border-box;
+    }
+    #preview .prose h1 { font-size: 1.7rem; border-bottom: 1px solid #2a2a2a; padding-bottom: 0.3rem; margin-top: 0.6rem; }
+    #preview .prose h2 { font-size: 1.35rem; border-bottom: 1px solid #222; padding-bottom: 0.25rem; margin-top: 1.6rem; }
+    #preview .prose h3 { font-size: 1.12rem; margin-top: 1.3rem; }
+    #preview .prose h4, .prose h5, .prose h6 { margin-top: 1rem; }
+    #preview .prose a { color: #6fb3a8; }
+    #preview .prose a:hover { text-decoration: underline; }
+    #preview .prose code {
+      background: #1a1a1a; padding: 0.1rem 0.35rem; border-radius: 3px;
+      font-family: ui-monospace, monospace; font-size: 0.85em; color: #e0c987;
+    }
+    #preview .prose pre {
+      background: #0a0a0a; border: 1px solid #1c1c1c; border-radius: 6px;
+      padding: 0.7rem 0.9rem; overflow: auto;
+    }
+    #preview .prose pre code { background: transparent; padding: 0; color: #d8d8d8; font-size: 0.82rem; }
+    #preview .prose blockquote {
+      border-left: 3px solid #355; padding: 0.1rem 0.9rem; color: #aaa;
+      margin: 0.8rem 0; background: #131818;
+    }
+    #preview .prose table { border-collapse: collapse; margin: 0.8rem 0; }
+    #preview .prose th, .prose td { border: 1px solid #2a2a2a; padding: 0.35rem 0.6rem; }
+    #preview .prose th { background: #1a1a1a; }
+    #preview .prose ul, .prose ol { padding-left: 1.5rem; }
+    #preview .prose li { margin: 0.2rem 0; }
+    #preview .prose hr { border: 0; border-top: 1px solid #2a2a2a; margin: 1.4rem 0; }
+    #preview .prose img { max-width: 100%; height: auto; border-radius: 4px; }
+
     /* AI tab content */
     #ai-pane { color: #aaa; }
     #ai-pane .meta { padding: 0.7rem 0.85rem 0.55rem; font-size: 0.74rem; border-bottom: 1px solid #1c1c1c; }
@@ -270,6 +305,7 @@
   <script src="/vendor/addon-fit.js"></script>
   <script src="/vendor/addon-webgl.js"></script>
   <script src="/vendor/addon-search.js"></script>
+  <script src="/vendor/marked.min.js"></script>
   <script src="/toast.js"></script>
   <script src="/app.js"></script>
   <script src="/fs.js"></script>
