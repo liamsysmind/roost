@@ -98,6 +98,15 @@
     console.warn('WebGL renderer unavailable, using DOM:', e);
   }
 
+  // Search addon — exposed on window so the AI panel can jump to prompts.
+  try {
+    const search = new SearchAddon.SearchAddon();
+    term.loadAddon(search);
+    window.roostSearchAddon = search;
+  } catch (e) {
+    console.warn('Search addon failed to load:', e);
+  }
+
   fit.fit();
 
   // Ctrl+C / Ctrl+Shift+C / Ctrl+Shift+V handling.

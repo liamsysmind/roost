@@ -14,6 +14,16 @@ type Handler struct {
 func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/ai/usage", h.handleUsage)
 	mux.HandleFunc("GET /api/ai/sessions", h.handleSessions)
+	mux.HandleFunc("GET /api/ai/active", h.handleActive)
+}
+
+func (h *Handler) handleActive(w http.ResponseWriter, r *http.Request) {
+	s, err := h.Reader.Active()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, s)
 }
 
 func (h *Handler) handleUsage(w http.ResponseWriter, r *http.Request) {

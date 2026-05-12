@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -71,17 +72,29 @@ type SessionInfo struct {
 
 // rawEvent only decodes the few fields we care about.
 type rawEvent struct {
-	Type    string `json:"type"`
-	Message *struct {
-		Model string `json:"model"`
-		Usage *struct {
-			InputTokens              int64 `json:"input_tokens"`
-			OutputTokens             int64 `json:"output_tokens"`
-			CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
-			CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
-		} `json:"usage"`
-	} `json:"message"`
-	Timestamp string `json:"timestamp"`
+	Type    string          `json:"type"`
+	UUID    string          `json:"uuid"`
+	Message *json.RawMessage `json:"message"`
+	Timestamp string        `json:"timestamp"`
+}
+
+// assistantMessage is the shape we care about when type == "assistant".
+type assistantMessage struct {
+	Model string `json:"model"`
+	Usage *struct {
+		InputTokens              int64 `json:"input_tokens"`
+		OutputTokens             int64 `json:"output_tokens"`
+		CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+		CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+	} `json:"usage"`
+}
+
+// userMessage is the shape we care about when type == "user".
+// message.content can be a string OR an array of content blocks; we accept
+// either via a custom Unmarshal.
+type userMessage struct {
+	Role    string          `json:"role"`
+	Content json.RawMessage `json:"content"`
 }
 
 // readFile aggregates usage from one JSONL file, optionally filtered by a
@@ -100,7 +113,11 @@ func readFile(path string, since time.Time) (Usage, error) {
 		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
 			continue
 		}
-		if ev.Type != "assistant" || ev.Message == nil || ev.Message.Usage == nil {
+		if ev.Type != "assistant" || ev.Message == nil {
+			continue
+		}
+		var msg assistantMessage
+		if err := json.Unmarshal(*ev.Message, &msg); err != nil || msg.Usage == nil {
 			continue
 		}
 		if !since.IsZero() && ev.Timestamp != "" {
@@ -108,8 +125,8 @@ func readFile(path string, since time.Time) (Usage, error) {
 				continue
 			}
 		}
-		p := modelPricing(ev.Message.Model)
-		usg := ev.Message.Usage
+		p := modelPricing(msg.Model)
+		usg := msg.Usage
 		u.InputTokens += usg.InputTokens
 		u.OutputTokens += usg.OutputTokens
 		u.CacheWriteTokens += usg.CacheCreationInputTokens
@@ -121,6 +138,197 @@ func readFile(path string, since time.Time) (Usage, error) {
 			float64(usg.CacheReadInputTokens)*p.CacheRead) / 1e6
 	}
 	return u, sc.Err()
+}
+
+// ActiveSession is the live context view of one session: model in use,
+// rolling context-window estimate, and the user prompts so far.
+type ActiveSession struct {
+	Project           string        `json:"project"`
+	Slug              string        `json:"slug"`
+	File              string        `json:"file"`
+	Modified          time.Time     `json:"modified"`
+	Model             string        `json:"model"`
+	Usage             Usage         `json:"usage"`
+	ContextTokens     int64         `json:"context_tokens"`      // input + cache_read + cache_creation on the latest assistant turn
+	ContextWindowEst  int64         `json:"context_window_est"`  // 200K for current Claude 4 family
+	Prompts           []PromptEntry `json:"prompts"`
+}
+
+// PromptEntry summarises one user message.
+type PromptEntry struct {
+	UUID      string `json:"uuid"`
+	Timestamp string `json:"timestamp"`
+	Preview   string `json:"preview"`
+}
+
+// Active scans every session jsonl, picks the most recently modified one,
+// and returns the model / context / prompts view.
+func (r *Reader) Active() (*ActiveSession, error) {
+	if r.Root == "" {
+		return nil, nil
+	}
+	projs, err := os.ReadDir(r.Root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var best struct {
+		slug string
+		file string
+		mtime time.Time
+	}
+	for _, p := range projs {
+		if !p.IsDir() {
+			continue
+		}
+		files, err := os.ReadDir(filepath.Join(r.Root, p.Name()))
+		if err != nil {
+			continue
+		}
+		for _, f := range files {
+			if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
+				continue
+			}
+			info, err := f.Info()
+			if err != nil {
+				continue
+			}
+			if info.ModTime().After(best.mtime) {
+				best.slug = p.Name()
+				best.file = f.Name()
+				best.mtime = info.ModTime()
+			}
+		}
+	}
+	if best.file == "" {
+		return nil, nil
+	}
+	return r.readActive(best.slug, best.file, best.mtime)
+}
+
+func (r *Reader) readActive(slug, file string, mtime time.Time) (*ActiveSession, error) {
+	path := filepath.Join(r.Root, slug, file)
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	out := &ActiveSession{
+		Project:  slugToProject(slug),
+		Slug:     slug,
+		File:     file,
+		Modified: mtime,
+		// Will be bumped to 1M further down if the conversation has already
+		// overflowed the 200K tier. The JSONL doesn't record the [1m] suffix
+		// so we infer from observed usage.
+		ContextWindowEst: 200_000,
+	}
+
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<16), 1<<22)
+	for sc.Scan() {
+		var ev rawEvent
+		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
+			continue
+		}
+		switch ev.Type {
+		case "assistant":
+			if ev.Message == nil {
+				continue
+			}
+			var m assistantMessage
+			if err := json.Unmarshal(*ev.Message, &m); err != nil || m.Usage == nil {
+				continue
+			}
+			out.Model = m.Model
+			p := modelPricing(m.Model)
+			u := m.Usage
+			out.Usage.InputTokens += u.InputTokens
+			out.Usage.OutputTokens += u.OutputTokens
+			out.Usage.CacheWriteTokens += u.CacheCreationInputTokens
+			out.Usage.CacheReadTokens += u.CacheReadInputTokens
+			out.Usage.Messages++
+			out.Usage.Cost += (float64(u.InputTokens)*p.Input +
+				float64(u.OutputTokens)*p.Output +
+				float64(u.CacheCreationInputTokens)*p.CacheWrite +
+				float64(u.CacheReadInputTokens)*p.CacheRead) / 1e6
+			// Latest assistant message's per-turn usage is the best proxy
+			// for the model's current context view.
+			out.ContextTokens = u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
+
+		case "user":
+			if ev.Message == nil {
+				continue
+			}
+			var m userMessage
+			if err := json.Unmarshal(*ev.Message, &m); err != nil {
+				continue
+			}
+			if m.Role != "user" {
+				continue
+			}
+			content := extractContentText(m.Content)
+			if content == "" {
+				continue
+			}
+			preview := content
+			if len(preview) > 140 {
+				preview = preview[:140] + "…"
+			}
+			out.Prompts = append(out.Prompts, PromptEntry{
+				UUID:      ev.UUID,
+				Timestamp: ev.Timestamp,
+				Preview:   preview,
+			})
+		}
+	}
+	// Bump window estimate up to 1M if we've already exceeded 200K — this
+	// is how we infer that the user is on the [1m]-context variant without
+	// the JSONL telling us so explicitly.
+	if out.ContextTokens > out.ContextWindowEst {
+		out.ContextWindowEst = 1_000_000
+	}
+	// Sort prompts by timestamp descending (newest first).
+	sort.SliceStable(out.Prompts, func(i, j int) bool {
+		return out.Prompts[i].Timestamp > out.Prompts[j].Timestamp
+	})
+	if len(out.Prompts) > 40 {
+		out.Prompts = out.Prompts[:40]
+	}
+	return out, sc.Err()
+}
+
+// extractContentText handles both string and array-of-content-block shapes.
+func extractContentText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	// Try string first.
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	// Try array of {"type": "text", "text": "..."} blocks.
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &blocks); err == nil {
+		var b strings.Builder
+		for _, blk := range blocks {
+			if blk.Type == "text" && blk.Text != "" {
+				if b.Len() > 0 {
+					b.WriteByte(' ')
+				}
+				b.WriteString(blk.Text)
+			}
+		}
+		return b.String()
+	}
+	return ""
 }
 
 // Total walks every project session file and returns the aggregated usage.

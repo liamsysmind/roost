@@ -54,6 +54,7 @@ func (s *Server) setupRoutes() {
 	mux.HandleFunc("GET /cost.js", s.handleStatic)
 	mux.HandleFunc("GET /notify.js", s.handleStatic)
 	mux.HandleFunc("GET /toast.js", s.handleStatic)
+	mux.HandleFunc("GET /ai.js", s.handleStatic)
 
 	wsh := &session.Handler{Manager: s.Sessions}
 	mux.HandleFunc("GET /ws/terminal", wsh.Serve)
