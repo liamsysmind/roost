@@ -19,6 +19,7 @@ type Handler struct {
 func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/fs/list", h.handleList)
 	mux.HandleFunc("GET /api/fs/download", h.handleDownload)
+	mux.HandleFunc("GET /api/fs/preview", h.handlePreview)
 	mux.HandleFunc("POST /api/fs/upload", h.handleUpload)
 	mux.HandleFunc("POST /api/fs/mkdir", h.handleMkdir)
 	mux.HandleFunc("POST /api/fs/rename", h.handleRename)
@@ -56,6 +57,99 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 	disposition := fmt.Sprintf(`attachment; filename*=UTF-8''%s`, url.PathEscape(filepath.Base(entry.Name)))
 	w.Header().Set("Content-Disposition", disposition)
 	_, _ = io.Copy(w, rc)
+}
+
+// handlePreview serves the file inline (no Content-Disposition attachment).
+// Content-Type is chosen by extension first, then sniffed from the body
+// (http.DetectContentType) so extensionless binaries don't masquerade as
+// text. Response is capped so the browser can't choke on huge files.
+const previewMaxBytes = 8 << 20 // 8 MB
+
+func (h *Handler) handlePreview(w http.ResponseWriter, r *http.Request) {
+	rel := r.URL.Query().Get("path")
+	rc, entry, err := h.API.Open(rel)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	defer rc.Close()
+	if entry.Size > previewMaxBytes {
+		writeError(w, http.StatusRequestEntityTooLarge,
+			fmt.Errorf("file is %d bytes; preview cap is %d. Use download instead.", entry.Size, previewMaxBytes))
+		return
+	}
+
+	body, err := io.ReadAll(rc)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	ct := previewMime(entry.Name)
+	if ct == "" {
+		ct = http.DetectContentType(body)
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
+	w.Header().Set("X-Roost-Filename", entry.Name)
+
+	if r.Method == http.MethodHead {
+		return
+	}
+	_, _ = w.Write(body)
+}
+
+// previewMime maps a filename to a Content-Type string suitable for inline
+// rendering. Anything unknown falls through to application/octet-stream so
+// the browser doesn't guess wrong on binaries.
+func previewMime(name string) string {
+	ext := strings.ToLower(filepath.Ext(name))
+	switch ext {
+	case ".txt", ".md", ".rst", ".log",
+		".json", ".yaml", ".yml", ".toml", ".xml", ".csv", ".tsv",
+		".html", ".htm", ".css",
+		".js", ".ts", ".tsx", ".jsx", ".mjs",
+		".go", ".py", ".rb", ".rs", ".c", ".h", ".cpp", ".hpp", ".cc",
+		".java", ".kt", ".swift", ".m", ".mm",
+		".sh", ".bash", ".zsh", ".fish",
+		".sql", ".diff", ".patch", ".conf", ".cfg", ".ini", ".env":
+		return "text/plain; charset=utf-8"
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	case ".svg":
+		return "image/svg+xml"
+	case ".bmp":
+		return "image/bmp"
+	case ".ico":
+		return "image/x-icon"
+	case ".pdf":
+		return "application/pdf"
+	case ".mp4", ".m4v":
+		return "video/mp4"
+	case ".webm":
+		return "video/webm"
+	case ".mov":
+		return "video/quicktime"
+	case ".mp3":
+		return "audio/mpeg"
+	case ".wav":
+		return "audio/wav"
+	case ".ogg":
+		return "audio/ogg"
+	case ".flac":
+		return "audio/flac"
+	case ".m4a":
+		return "audio/mp4"
+	}
+	// Unknown extension — let handlePreview sniff body bytes for a
+	// content-type. Returning "" rather than guessing means binaries
+	// without an extension don't get served as text/plain.
+	return ""
 }
 
 func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {

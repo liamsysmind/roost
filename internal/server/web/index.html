@@ -93,6 +93,52 @@
     #fstatus { padding: 0.3rem 0.7rem; font-size: 0.7rem; color: #666;
       border-top: 1px solid #1c1c1c; min-height: 1.2em; }
     #fstatus.err { color: #f88; }
+
+    /* preview modal */
+    #preview {
+      position: fixed; inset: 0; display: none;
+      align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.7); z-index: 20;
+      backdrop-filter: blur(3px);
+    }
+    #preview.open { display: flex; }
+    #preview .box {
+      background: #111; border: 1px solid #2a2a2a; border-radius: 8px;
+      width: min(1100px, 92vw); max-height: 92vh; display: flex; flex-direction: column;
+      overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+    }
+    #preview .head {
+      display: flex; align-items: center; gap: 0.5rem;
+      padding: 0.55rem 0.9rem; border-bottom: 1px solid #1c1c1c;
+      font-size: 0.78rem; color: #9aa;
+    }
+    #preview .head .title {
+      flex: 1; font-family: ui-monospace, monospace; color: #cdb;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    #preview .head a, #preview .head button {
+      background: transparent; color: #9aa; border: 1px solid #333;
+      padding: 3px 9px; border-radius: 4px; font-size: 0.72rem; cursor: pointer;
+      text-decoration: none;
+    }
+    #preview .head a:hover, #preview .head button:hover { color: #fff; border-color: #555; }
+    #preview .body {
+      flex: 1; overflow: auto; padding: 0.5rem; background: #0a0a0a;
+      min-height: 200px; display: flex; align-items: stretch; justify-content: stretch;
+    }
+    #preview .body pre {
+      flex: 1; margin: 0; padding: 0.6rem 0.8rem; color: #e6e6e6;
+      font-family: ui-monospace, "JetBrains Mono", Menlo, monospace;
+      font-size: 0.82rem; line-height: 1.45;
+      white-space: pre; tab-size: 4; overflow: auto;
+    }
+    #preview .body img, #preview .body video {
+      max-width: 100%; max-height: 80vh; margin: auto; display: block; object-fit: contain;
+    }
+    #preview .body audio { width: 100%; margin: auto; }
+    #preview .body iframe { width: 100%; height: 80vh; border: 0; background: #fff; }
+    #preview .body .msg { color: #aaa; margin: auto; font-size: 0.85rem; text-align: center; padding: 2rem; }
+    #preview .body .msg.err { color: #f88; }
   </style>
 </head>
 <body>
@@ -121,6 +167,16 @@
       <div id="ftree"></div>
       <div id="fstatus">drag files here to upload</div>
       <div id="fdrop">drop to upload</div>
+    </div>
+  </div>
+  <div id="preview">
+    <div class="box">
+      <div class="head">
+        <span class="title"></span>
+        <a class="dl" href="#" target="_blank" rel="noopener" title="download">↓ download</a>
+        <button class="close" title="close (Esc)">✕</button>
+      </div>
+      <div class="body"></div>
     </div>
   </div>
   <script src="/vendor/xterm.js"></script>
