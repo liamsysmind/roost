@@ -269,6 +269,34 @@
   const pvDlEl     = previewEl.querySelector('.dl');
   const pvCloseEl  = previewEl.querySelector('.close');
 
+  // Map file extension → highlight.js language id. Anything not in here
+  // falls through to hljs auto-detect, which is usually fine but slower.
+  const langByExt = {
+    go: 'go',
+    py: 'python',
+    rb: 'ruby',
+    rs: 'rust',
+    c: 'c', h: 'c',
+    cpp: 'cpp', hpp: 'cpp', cc: 'cpp',
+    java: 'java', kt: 'kotlin', swift: 'swift',
+    js: 'javascript', mjs: 'javascript', cjs: 'javascript',
+    ts: 'typescript', tsx: 'tsx', jsx: 'javascript',
+    sh: 'bash', bash: 'bash', zsh: 'bash', fish: 'bash',
+    json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'toml',
+    xml: 'xml', html: 'xml', htm: 'xml', css: 'css', scss: 'scss',
+    sql: 'sql', diff: 'diff', patch: 'diff',
+    ini: 'ini', conf: 'ini', cfg: 'ini',
+    dockerfile: 'dockerfile',
+    makefile: 'makefile',
+  };
+  function extToLang(name) {
+    const lower = name.toLowerCase();
+    if (lower === 'makefile' || lower === 'gnumakefile') return 'makefile';
+    if (lower === 'dockerfile') return 'dockerfile';
+    const m = lower.match(/\.([^.]+)$/);
+    return m ? langByExt[m[1]] || null : null;
+  }
+
   // Dispatch by what the server says the Content-Type is. The server is
   // authoritative because it sniffs file bytes for extensionless files,
   // catching binaries that would otherwise show up as text gibberish.
@@ -338,10 +366,23 @@
           // If we ever expand to multi-user, swap in DOMPurify here.
           window.marked.setOptions({ gfm: true, breaks: false });
           pvBodyEl.innerHTML = '<div class="prose"></div>';
-          pvBodyEl.querySelector('.prose').innerHTML = window.marked.parse(txt);
+          const proseEl = pvBodyEl.querySelector('.prose');
+          proseEl.innerHTML = window.marked.parse(txt);
+          // Highlight every fenced code block inside the rendered HTML.
+          if (window.hljs) {
+            proseEl.querySelectorAll('pre code').forEach((b) => {
+              try { hljs.highlightElement(b); } catch (_) {}
+            });
+          }
         } else {
-          pvBodyEl.innerHTML = '<pre></pre>';
-          pvBodyEl.querySelector('pre').textContent = txt;
+          pvBodyEl.innerHTML = '<pre><code></code></pre>';
+          const code = pvBodyEl.querySelector('code');
+          code.textContent = txt;
+          if (window.hljs) {
+            const lang = extToLang(name);
+            if (lang) code.className = 'language-' + lang;
+            try { hljs.highlightElement(code); } catch (_) {}
+          }
         }
       } else {
         pvBodyEl.innerHTML = '<div class="msg">binary file (' + ct + ') — use ↓ download to save</div>';
