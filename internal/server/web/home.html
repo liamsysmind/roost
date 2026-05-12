@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>roost — sessions</title>
+  <style>
+    :root { color-scheme: dark; }
+    html, body {
+      margin: 0; padding: 0; min-height: 100vh; background: #0c0c0c; color: #e6e6e6;
+      font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+    }
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0.75rem 1.25rem; border-bottom: 1px solid #1c1c1c;
+    }
+    header .brand { font-weight: 600; letter-spacing: 0.06em; }
+    header form { margin: 0; }
+    header button {
+      background: transparent; color: #8aa; border: 1px solid #2a2a2a;
+      padding: 0.3rem 0.7rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem;
+    }
+    header button:hover { color: #fff; border-color: #555; }
+
+    main { max-width: 720px; margin: 2.5rem auto; padding: 0 1.25rem; }
+    h1 { font-size: 1.4rem; font-weight: 600; margin: 0 0 1.5rem; }
+
+    .new {
+      display: flex; align-items: center; gap: 0.6rem;
+      background: #1c1c1c; border: 1px solid #2a2a2a; border-radius: 8px;
+      padding: 0.8rem 1rem; margin-bottom: 1.25rem;
+    }
+    .new button {
+      background: #4caf80; color: #0a0a0a; border: none; padding: 0.5rem 1rem;
+      border-radius: 6px; font-weight: 700; cursor: pointer; font-size: 0.9rem;
+    }
+    .new button:hover { background: #5cbf90; }
+    .new input {
+      flex: 1; background: #0c0c0c; color: #eee; border: 1px solid #2a2a2a;
+      padding: 0.5rem 0.6rem; border-radius: 6px; font-family: ui-monospace, monospace;
+      font-size: 0.9rem;
+    }
+    .new input:focus { outline: 1px solid #4caf80; border-color: #4caf80; }
+    .hint { color: #777; font-size: 0.75rem; margin: -0.5rem 0 1.5rem; }
+
+    .list { list-style: none; padding: 0; margin: 0; }
+    .item {
+      display: flex; align-items: stretch; margin-bottom: 0.5rem;
+      background: #161616; border: 1px solid #222; border-radius: 8px;
+      overflow: hidden;
+      transition: background 0.1s, border-color 0.1s;
+    }
+    .item:hover { background: #1c1c1c; border-color: #3a3a3a; }
+    .item .link {
+      flex: 1; padding: 0.7rem 1rem; text-decoration: none; color: inherit;
+      display: block;
+    }
+    .item .row { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+    .item .id { font-family: ui-monospace, monospace; color: #8de1b3; font-size: 0.95rem; }
+    .item .id.closed { color: #d77; }
+    .item .meta { color: #8a8a8a; font-size: 0.78rem; white-space: nowrap; }
+    .item .actions {
+      display: flex; align-items: center; padding-right: 0.5rem; gap: 0.3rem;
+      opacity: 0; transition: opacity 0.12s;
+    }
+    .item:hover .actions { opacity: 1; }
+    .item .act {
+      background: transparent; color: #888; border: 1px solid #2a2a2a;
+      padding: 3px 8px; border-radius: 4px; font-size: 0.72rem; cursor: pointer;
+    }
+    .item .act:hover { color: #fff; border-color: #555; }
+    .item .act.del:hover { color: #f88; border-color: #844; }
+
+    .empty { color: #888; text-align: center; padding: 2rem; border: 1px dashed #2a2a2a; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="brand">roost</span>
+    <form method="post" action="/logout">
+      <button type="submit">logout</button>
+    </form>
+  </header>
+  <main>
+    <h1>Your sessions</h1>
+    <div class="new">
+      <input id="new-name" placeholder="optional name (or leave blank for a random ID)" autocomplete="off">
+      <button id="new-btn">+ New session</button>
+    </div>
+    <div class="hint">Tip: name a session so you can spot it later (e.g. <code>zephyr-build</code>, <code>claude-rfc</code>).</div>
+    <ul id="list" class="list"></ul>
+    <div id="empty" class="empty" hidden>No sessions yet. Create one above.</div>
+  </main>
+  <script src="/home.js"></script>
+</body>
+</html>

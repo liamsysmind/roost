@@ -1,8 +1,40 @@
 // roost terminal frontend.
 //
-// Connects xterm.js to /ws/terminal. Binary frames carry TTY bytes;
-// text frames carry control commands (currently only "resize ROWS COLS").
+// Each browser tab connects to its own named session, identified by URL:
+//   /s/{id}    explicit path-based session id (bookmarkable, shareable)
+//   /#{id}     fragment fallback (handy for tab clones)
+//   /          generates a fresh UUID, rewrites URL to /#{uuid}
 (() => {
+  function resolveSessionID() {
+    const m = location.pathname.match(/^\/s\/([^\/?#]+)/);
+    if (m) return decodeURIComponent(m[1]);
+    if (location.hash.length > 1) return decodeURIComponent(location.hash.slice(1));
+    const id = (crypto.randomUUID
+      ? crypto.randomUUID()
+      : String(Date.now()) + '-' + Math.random().toString(36).slice(2, 10));
+    history.replaceState(null, '', '#' + id);
+    return id;
+  }
+
+  const sessionID = resolveSessionID();
+  document.title = `roost — ${sessionID.slice(0, 8)}`;
+
+  const tag = document.getElementById('session-tag');
+  tag.textContent = sessionID.slice(0, 8);
+  tag.addEventListener('click', () => {
+    const url = location.origin + '/s/' + encodeURIComponent(sessionID);
+    const restore = () => setTimeout(() => tag.textContent = sessionID.slice(0, 8), 800);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(
+        () => { tag.textContent = 'copied!'; restore(); },
+        () => { tag.textContent = 'copy failed'; restore(); },
+      );
+    } else {
+      tag.textContent = url;
+      restore();
+    }
+  });
+
   const term = new Terminal({
     cursorBlink: true,
     fontFamily: 'ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace',
@@ -25,7 +57,8 @@
   fit.fit();
 
   const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(`${wsProto}//${location.host}/ws/terminal`);
+  const wsURL = `${wsProto}//${location.host}/ws/terminal/${encodeURIComponent(sessionID)}`;
+  const ws = new WebSocket(wsURL);
   ws.binaryType = 'arraybuffer';
 
   ws.onopen = () => {

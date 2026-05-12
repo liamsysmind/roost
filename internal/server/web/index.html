@@ -6,11 +6,42 @@
   <title>roost</title>
   <link rel="stylesheet" href="/vendor/xterm.css">
   <style>
-    html, body { margin: 0; padding: 0; height: 100%; background: #000; color: #eee; overflow: hidden; }
-    #term { width: 100vw; height: 100vh; }
+    html, body { margin: 0; padding: 0; height: 100%; background: #000; color: #eee; overflow: hidden;
+      font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
+    #bar {
+      position: fixed; top: 0; left: 0; right: 0; height: 28px;
+      background: rgba(20,20,20,0.92); border-bottom: 1px solid #2a2a2a;
+      display: flex; align-items: center; padding: 0 0.6rem;
+      font-size: 0.75rem; color: #9aa; user-select: none;
+      backdrop-filter: blur(6px);
+      z-index: 10;
+    }
+    #bar .left  { flex: 1; display: flex; gap: 0.5rem; align-items: center; }
+    #bar .right { display: flex; gap: 0.4rem; }
+    #bar .tag { font-family: ui-monospace, monospace; color: #6c8; cursor: pointer; }
+    #bar .tag:hover { text-decoration: underline; }
+    #bar a, #bar button {
+      background: transparent; color: #9aa; border: 1px solid #333;
+      padding: 2px 8px; border-radius: 4px; font-size: 0.72rem; cursor: pointer;
+      text-decoration: none;
+    }
+    #bar a:hover, #bar button:hover { color: #fff; border-color: #555; }
+    #term { position: absolute; top: 28px; left: 0; right: 0; bottom: 0; }
   </style>
 </head>
 <body>
+  <div id="bar">
+    <div class="left">
+      <a href="/" title="back to session list" style="color: #9aa; text-decoration: none;">roost</a>
+      <span class="tag" id="session-tag" title="click to copy share URL"></span>
+    </div>
+    <div class="right">
+      <a href="/" target="_blank" rel="noopener" title="open a new session in a new tab">+ new</a>
+      <form method="post" action="/logout" style="margin:0">
+        <button type="submit" title="sign out">logout</button>
+      </form>
+    </div>
+  </div>
   <div id="term"></div>
   <script src="/vendor/xterm.js"></script>
   <script src="/vendor/addon-fit.js"></script>

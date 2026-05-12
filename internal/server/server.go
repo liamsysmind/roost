@@ -3,6 +3,7 @@ package server
 
 import (
 	"embed"
+	"encoding/json"
 	"io/fs"
 	"log"
 	"net/http"
@@ -37,12 +38,18 @@ func (s *Server) setupRoutes() {
 	mux.HandleFunc("POST /logout", s.handleLogout)
 	mux.HandleFunc("GET /vendor/", s.handleStatic)
 	mux.HandleFunc("GET /app.js", s.handleStatic)
+	mux.HandleFunc("GET /home.js", s.handleStatic)
 
 	wsh := &session.Handler{Manager: s.Sessions}
 	mux.HandleFunc("GET /ws/terminal", wsh.Serve)
 	mux.HandleFunc("GET /ws/terminal/{id}", wsh.Serve)
 
-	mux.HandleFunc("GET /", s.handleIndex)
+	mux.HandleFunc("GET /api/sessions", s.handleSessionsList)
+	mux.HandleFunc("POST /api/sessions/{id}/rename", s.handleSessionRename)
+	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleSessionDelete)
+
+	mux.HandleFunc("GET /", s.handleHome)
+	mux.HandleFunc("GET /s/{id}", s.handleIndex)
 
 	s.handler = s.authMiddleware(mux)
 }
@@ -117,6 +124,49 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(b)
+}
+
+func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
+	b, err := fs.ReadFile(s.static, "home.html")
+	if err != nil {
+		http.Error(w, "home template missing", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(b)
+}
+
+func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
+	list := s.Sessions.List()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(list)
+}
+
+func (s *Server) handleSessionRename(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	to := strings.TrimSpace(r.FormValue("to"))
+	if to == "" {
+		http.Error(w, "missing 'to' parameter", http.StatusBadRequest)
+		return
+	}
+	if err := s.Sessions.Rename(id, to); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.Sessions.Delete(id); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
