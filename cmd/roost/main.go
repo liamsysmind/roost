@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os"
 	"syscall"
 
@@ -199,13 +200,14 @@ func runSetup(args []string) {
 		log.Fatal(err)
 	}
 
+	addr, fallback := pickListenAddr()
 	cfg := &config.Config{
 		Auth: config.Auth{
 			PasswordHash:  string(hash),
 			SessionSecret: hex.EncodeToString(secret[:]),
 			HookSecret:    hex.EncodeToString(hookSecret[:]),
 		},
-		Server: config.Server{Addr: "127.0.0.1:8080"},
+		Server: config.Server{Addr: addr},
 		Session: config.Session{
 			// LogDir empty → resolves to $XDG_DATA_HOME/roost/sessions
 			// or ~/.local/share/roost/sessions.
@@ -213,8 +215,39 @@ func runSetup(args []string) {
 			IdleTTL:  "24h",
 		},
 	}
+	_ = fallback
 	if err := config.Save(*cfgPath, cfg); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("Wrote %s. Run `roost serve` to start.\n", *cfgPath)
+	fmt.Printf("Wrote %s.\n", *cfgPath)
+	if fallback {
+		fmt.Printf("Listen address: %s (8080 was busy; another user or service holds it.)\n", addr)
+		fmt.Printf("SSH tunnel from your laptop:\n  ssh -L 8080:localhost:%s user@host\n", portOf(addr))
+	} else {
+		fmt.Printf("Listen address: %s\n", addr)
+	}
+	fmt.Println("Run `roost serve` to start.")
+}
+
+// pickListenAddr scans 127.0.0.1:8080..8199 and returns the first port we
+// can bind. The boolean is true when we had to fall back to a non-default
+// port (8080 was already taken).
+func pickListenAddr() (string, bool) {
+	for port := 8080; port < 8200; port++ {
+		addr := fmt.Sprintf("127.0.0.1:%d", port)
+		l, err := net.Listen("tcp", addr)
+		if err != nil {
+			continue
+		}
+		_ = l.Close()
+		return addr, port != 8080
+	}
+	return "127.0.0.1:8080", false
+}
+
+func portOf(addr string) string {
+	if _, p, err := net.SplitHostPort(addr); err == nil {
+		return p
+	}
+	return "8080"
 }
