@@ -2,6 +2,7 @@ package session
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
@@ -47,6 +48,17 @@ func newSession(id string, cfg Config) (*Session, error) {
 	lg, err := openLog(logPath)
 	if err != nil {
 		return nil, err
+	}
+
+	// If we're resuming an existing log (e.g. the previous shell exited
+	// or the server restarted), write a visible banner so the user can
+	// tell where the old output ends and the fresh shell begins.
+	// Without this, replaying the log shows the old shell's last prompt
+	// immediately next to the new shell's first prompt — confusing.
+	if lg.Size() > 0 {
+		banner := []byte(fmt.Sprintf("\r\n\x1b[2;33m── new shell %s ──\x1b[0m\r\n",
+			time.Now().Format("2006-01-02 15:04:05")))
+		_, _ = lg.Write(banner)
 	}
 
 	shell := cfg.Shell
