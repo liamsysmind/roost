@@ -9,6 +9,10 @@ import (
 
 type Handler struct {
 	Reader *Reader
+	// CwdForSession, if set, is consulted when a request includes
+	// ?session={id}. The returned cwd is forwarded to Reader.Active so we
+	// surface the AI session matching the terminal's working directory.
+	CwdForSession func(sessionID string) string
 }
 
 func (h *Handler) Mount(mux *http.ServeMux) {
@@ -18,7 +22,11 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 }
 
 func (h *Handler) handleActive(w http.ResponseWriter, r *http.Request) {
-	s, err := h.Reader.Active()
+	var cwd string
+	if sid := r.URL.Query().Get("session"); sid != "" && h.CwdForSession != nil {
+		cwd = h.CwdForSession(sid)
+	}
+	s, err := h.Reader.Active(cwd)
 	if err != nil {
 		writeError(w, err)
 		return

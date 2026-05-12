@@ -253,11 +253,19 @@ type PromptEntry struct {
 	Preview   string `json:"preview"`
 }
 
-// Active scans every session jsonl, picks the most recently modified one,
-// and returns the model / context / prompts view.
-func (r *Reader) Active() (*ActiveSession, error) {
+// Active returns the live Claude Code session view.
+//
+//   - hintCwd != "":  only look at the jsonl directory that matches that
+//                     working directory. If nothing is there, return nil
+//                     (no Claude session for this project).
+//   - hintCwd == "":  scan every project and return the most recently
+//                     modified jsonl across the lot.
+func (r *Reader) Active(hintCwd string) (*ActiveSession, error) {
 	if r.Root == "" {
 		return nil, nil
+	}
+	if hintCwd != "" {
+		return r.activeForCwd(hintCwd)
 	}
 	projs, err := os.ReadDir(r.Root)
 	if err != nil {
@@ -298,6 +306,58 @@ func (r *Reader) Active() (*ActiveSession, error) {
 		return nil, nil
 	}
 	return r.readActive(best.slug, best.file, best.mtime)
+}
+
+// projectToSlug mirrors Claude Code's slugification of cwd into its
+// projects/ directory name. "/home/williamlee/work/zephyr" becomes
+// "-home-williamlee-work-zephyr".
+func projectToSlug(cwd string) string {
+	if cwd == "" {
+		return ""
+	}
+	if strings.HasPrefix(cwd, "/") {
+		return "-" + strings.ReplaceAll(cwd[1:], "/", "-")
+	}
+	return strings.ReplaceAll(cwd, "/", "-")
+}
+
+// activeForCwd looks only inside the slug directory that maps from cwd.
+// Returns nil if no jsonl exists there (caller surfaces "no AI session for
+// this project" rather than falling back to global noise).
+func (r *Reader) activeForCwd(cwd string) (*ActiveSession, error) {
+	slug := projectToSlug(cwd)
+	if slug == "" {
+		return nil, nil
+	}
+	dir := filepath.Join(r.Root, slug)
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var best struct {
+		file  string
+		mtime time.Time
+	}
+	for _, f := range files {
+		if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
+			continue
+		}
+		info, err := f.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().After(best.mtime) {
+			best.file = f.Name()
+			best.mtime = info.ModTime()
+		}
+	}
+	if best.file == "" {
+		return nil, nil
+	}
+	return r.readActive(slug, best.file, best.mtime)
 }
 
 func (r *Reader) readActive(slug, file string, mtime time.Time) (*ActiveSession, error) {

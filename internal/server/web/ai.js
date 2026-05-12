@@ -27,9 +27,18 @@
     return (n / 1_000_000).toFixed(2) + 'M';
   }
 
+  function sessionIdFromPath() {
+    const m = location.pathname.match(/^\/s\/([^\/?#]+)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+
   async function refresh() {
     try {
-      const r = await fetch('/api/ai/active');
+      const sid = sessionIdFromPath();
+      const url = sid
+        ? '/api/ai/active?session=' + encodeURIComponent(sid)
+        : '/api/ai/active';
+      const r = await fetch(url);
       if (!r.ok) return;
       const j = await r.json();
       if (!j || !j.file) {
@@ -41,7 +50,7 @@
         ctxFill.style.width = '0%';
         msgsDetail.textContent = '—';
         tokensDetail.textContent = '—';
-        promptsEl.innerHTML = '<div class="empty">no active Claude Code session</div>';
+        promptsEl.innerHTML = '<div class="empty">no Claude Code session for the terminal\'s current directory</div>';
         if (badgeEl) { badgeEl.hidden = true; }
         return;
       }
