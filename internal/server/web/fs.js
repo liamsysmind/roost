@@ -134,7 +134,7 @@
         if (isDir) {
           await toggleExpand(n, path);
         } else {
-          download(path);
+          openPreview(path);
         }
       });
       const dl = n.querySelector('.dl');
@@ -180,6 +180,100 @@
     a.click();
     setTimeout(() => a.remove(), 0);
   }
+
+  // ---- preview modal ----
+  const previewEl  = document.getElementById('preview');
+  const pvTitleEl  = previewEl.querySelector('.title');
+  const pvBodyEl   = previewEl.querySelector('.body');
+  const pvDlEl     = previewEl.querySelector('.dl');
+  const pvCloseEl  = previewEl.querySelector('.close');
+
+  // Dispatch by what the server says the Content-Type is. The server is
+  // authoritative because it sniffs file bytes for extensionless files,
+  // catching binaries that would otherwise show up as text gibberish.
+  function kindFromContentType(ct) {
+    ct = (ct || '').split(';')[0].trim().toLowerCase();
+    if (ct.startsWith('image/')) return 'image';
+    if (ct.startsWith('video/')) return 'video';
+    if (ct.startsWith('audio/')) return 'audio';
+    if (ct === 'application/pdf') return 'pdf';
+    if (ct.startsWith('text/')) return 'text';
+    return 'binary';
+  }
+
+  async function openPreview(path) {
+    const name = path.split('/').pop();
+    pvTitleEl.textContent = path;
+    pvDlEl.href = '/api/fs/download?path=' + encodeURIComponent(path);
+    pvBodyEl.innerHTML = '<div class="msg">loading…</div>';
+    previewEl.classList.add('open');
+
+    const url = '/api/fs/preview?path=' + encodeURIComponent(path);
+    let ct = '';
+    try {
+      const r = await fetch(url, { method: 'HEAD' });
+      if (!r.ok) {
+        const t = await r.text();
+        pvBodyEl.innerHTML = '<div class="msg err"></div>';
+        pvBodyEl.querySelector('.msg').textContent = t.trim() || r.statusText;
+        return;
+      }
+      ct = r.headers.get('Content-Type') || '';
+    } catch (e) {
+      pvBodyEl.innerHTML = '<div class="msg err"></div>';
+      pvBodyEl.querySelector('.msg').textContent = 'preview failed: ' + e.message;
+      return;
+    }
+
+    const kind = kindFromContentType(ct);
+    try {
+      if (kind === 'image') {
+        pvBodyEl.innerHTML = '';
+        const img = document.createElement('img');
+        img.src = url; img.alt = name;
+        img.onerror = () => { pvBodyEl.innerHTML = '<div class="msg err">image failed to load</div>'; };
+        pvBodyEl.appendChild(img);
+      } else if (kind === 'video') {
+        pvBodyEl.innerHTML = '';
+        const v = document.createElement('video');
+        v.src = url; v.controls = true; v.autoplay = false;
+        pvBodyEl.appendChild(v);
+      } else if (kind === 'audio') {
+        pvBodyEl.innerHTML = '';
+        const a = document.createElement('audio');
+        a.src = url; a.controls = true;
+        pvBodyEl.appendChild(a);
+      } else if (kind === 'pdf') {
+        pvBodyEl.innerHTML = '';
+        const f = document.createElement('iframe');
+        f.src = url;
+        pvBodyEl.appendChild(f);
+      } else if (kind === 'text') {
+        const r = await fetch(url);
+        const txt = await r.text();
+        pvBodyEl.innerHTML = '<pre></pre>';
+        pvBodyEl.querySelector('pre').textContent = txt;
+      } else {
+        pvBodyEl.innerHTML = '<div class="msg">binary file (' + ct + ') — use ↓ download to save</div>';
+      }
+    } catch (e) {
+      pvBodyEl.innerHTML = '<div class="msg err"></div>';
+      pvBodyEl.querySelector('.msg').textContent = 'preview failed: ' + e.message;
+    }
+  }
+
+  function closePreview() {
+    previewEl.classList.remove('open');
+    pvBodyEl.innerHTML = '';
+  }
+
+  pvCloseEl.addEventListener('click', closePreview);
+  previewEl.addEventListener('click', (e) => {
+    if (e.target === previewEl) closePreview();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && previewEl.classList.contains('open')) closePreview();
+  });
 
   async function rename(path) {
     const oldName = path.split('/').pop();
