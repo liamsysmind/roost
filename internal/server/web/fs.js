@@ -350,12 +350,7 @@
     if (![...(e.dataTransfer?.types || [])].includes('Files')) return;
     e.preventDefault();
   });
-  dropZone.addEventListener('drop', async (e) => {
-    if (![...(e.dataTransfer?.types || [])].includes('Files')) return;
-    e.preventDefault();
-    dragDepth = 0;
-    fsEl.classList.remove('dragging-over');
-    const files = [...(e.dataTransfer?.files || [])];
+  async function uploadFiles(files) {
     if (!files.length) return;
     const target = absCwd();
     setStatus(`uploading ${files.length} file(s) → ${target}...`);
@@ -371,7 +366,28 @@
     } catch (err) {
       setStatus('upload failed: ' + err.message, true);
     }
+  }
+
+  dropZone.addEventListener('drop', async (e) => {
+    if (![...(e.dataTransfer?.types || [])].includes('Files')) return;
+    e.preventDefault();
+    dragDepth = 0;
+    fsEl.classList.remove('dragging-over');
+    await uploadFiles([...(e.dataTransfer?.files || [])]);
   });
+
+  // Ctrl+V file paste: Windows Explorer / macOS Finder "Copy" + Ctrl+V on the
+  // browser fires a paste event whose clipboardData.files holds the actual
+  // File objects. We listen in the capture phase so xterm.js (terminal focus)
+  // doesn't consume the event before we see it. Pure text pastes have no
+  // files attached and pass through to whichever handler claims them next.
+  window.addEventListener('paste', (e) => {
+    const files = [...(e.clipboardData?.files || [])];
+    if (!files.length) return;
+    e.preventDefault();
+    e.stopPropagation();
+    uploadFiles(files);
+  }, true);
 
   document.getElementById('fmkdir').addEventListener('click', mkdir);
   document.getElementById('frefresh').addEventListener('click', refresh);
