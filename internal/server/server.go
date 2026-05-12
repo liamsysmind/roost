@@ -65,7 +65,13 @@ func (s *Server) setupRoutes() {
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleSessionDelete)
 
 	(&rfs.Handler{API: s.FS}).Mount(mux)
-	(&ai.Handler{Reader: ai.NewReader()}).Mount(mux)
+	(&ai.Handler{
+		Reader: ai.NewReader(),
+		CwdForSession: func(sid string) string {
+			c, _ := s.Sessions.Cwd(sid)
+			return c
+		},
+	}).Mount(mux)
 
 	mux.HandleFunc("GET /api/notify/stream", s.handleNotifyStream)
 	mux.HandleFunc("POST /api/notify", s.handleNotifyPost)
