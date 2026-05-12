@@ -21,6 +21,15 @@
     statusEl.classList.toggle('err', !!err);
   }
 
+  function absCwd() {
+    const r = rootAbs.replace(/\/+$/, '');
+    return cwd ? r + '/' + cwd : r;
+  }
+
+  function setIdleStatus(extra) {
+    setStatus('drag files here → ' + absCwd() + (extra ? ' · ' + extra : ''));
+  }
+
   function fmtSize(b) {
     if (b < 1024) return b + 'B';
     if (b < 1024 * 1024) return (b / 1024).toFixed(1) + 'K';
@@ -105,7 +114,7 @@
         const holder = treeEl.querySelector(`[data-children-of="${cssEscape(p)}"]`);
         if (holder) await loadChildren(holder, depthOf(p));
       }
-      setStatus(`${entries.length} item${entries.length === 1 ? '' : 's'}`);
+      setIdleStatus(`${entries.length} item${entries.length === 1 ? '' : 's'}`);
     } catch (e) {
       setStatus(e.message, true);
     }
@@ -318,11 +327,13 @@
   }
 
   // --- drag/drop upload ---
+  const dropTextEl = document.getElementById('fdrop-text');
   let dragDepth = 0;
   fsEl.addEventListener('dragenter', (e) => {
     if (!e.dataTransfer || ![...e.dataTransfer.types].includes('Files')) return;
     e.preventDefault();
     dragDepth++;
+    if (dropTextEl) dropTextEl.textContent = 'drop to upload → ' + absCwd();
     fsEl.classList.add('dragging-over');
   });
   fsEl.addEventListener('dragleave', () => {
@@ -339,7 +350,8 @@
     fsEl.classList.remove('dragging-over');
     const files = [...(e.dataTransfer?.files || [])];
     if (!files.length) return;
-    setStatus(`uploading ${files.length} file(s)...`);
+    const target = absCwd();
+    setStatus(`uploading ${files.length} file(s) → ${target}...`);
     const fd = new FormData();
     fd.append('path', cwd || '/');
     for (const f of files) fd.append('file', f);
@@ -347,7 +359,7 @@
       const r = await fetch('/api/fs/upload', { method: 'POST', body: fd });
       if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
       const out = await r.json();
-      setStatus(`uploaded ${out.saved?.length || files.length} file(s)`);
+      setStatus(`uploaded ${out.saved?.length || files.length} file(s) → ${target}`);
       refresh();
     } catch (err) {
       setStatus('upload failed: ' + err.message, true);
