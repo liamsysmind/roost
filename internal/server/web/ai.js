@@ -1,23 +1,22 @@
-// AI session panel.
+// AI session pane.
 //
-// Polls /api/ai/active to surface the live conversation: model in use,
+// Lives in the right-side tab strip alongside the file tree. Polls
+// /api/ai/active and renders the live conversation: model in use,
 // rolling context tokens, recent user prompts. Click a prompt to jump
-// the terminal scrollback to where it appeared (via xterm's search addon).
+// the terminal scrollback to where it appeared.
 (() => {
   const modelTag   = document.getElementById('ai-model');
   const ctxTag     = document.getElementById('ai-ctx');
-  const panelEl    = document.getElementById('ai-panel');
   const projectEl  = document.getElementById('ai-project');
   const modelFull  = document.getElementById('ai-model-full');
   const ctxDetail  = document.getElementById('ai-ctx-detail');
   const ctxFill    = document.getElementById('ai-ctx-fill');
   const costDetail = document.getElementById('ai-cost-detail');
   const promptsEl  = document.getElementById('ai-prompts');
-  const closeEl    = panelEl.querySelector('.head .close');
+  const badgeEl    = document.getElementById('ai-tab-badge');
 
   function shortModel(m) {
     if (!m) return '—';
-    // 'claude-opus-4-7' → 'opus-4-7'
     return m.replace(/^claude-/, '');
   }
   function fmtK(n) {
@@ -33,9 +32,6 @@
     return '$' + n.toFixed(2);
   }
 
-  // Latest fetched state, for panel rendering on click.
-  let last = null;
-
   async function refresh() {
     try {
       const r = await fetch('/api/ai/active');
@@ -44,55 +40,56 @@
       if (!j || !j.file) {
         modelTag.textContent = '—';
         ctxTag.textContent = '—';
+        projectEl.textContent = '—';
+        modelFull.textContent = '—';
+        ctxDetail.textContent = '—';
+        ctxFill.style.width = '0%';
+        costDetail.textContent = '—';
+        promptsEl.innerHTML = '<div class="empty">no active Claude Code session</div>';
+        if (badgeEl) { badgeEl.hidden = true; }
         return;
       }
-      last = j;
-      modelTag.textContent = shortModel(j.model);
       const ctx = j.context_tokens || 0;
       const win = j.context_window_est || 200000;
-      const pct = Math.min(100, Math.round(ctx / win * 100));
-      ctxTag.textContent = `${fmtK(ctx)}/${fmtK(win)} (${pct}%)`;
+      const pct = Math.min(100, ctx / win * 100);
+
+      modelTag.textContent = shortModel(j.model);
+      ctxTag.textContent = `${fmtK(ctx)}/${fmtK(win)} (${pct.toFixed(0)}%)`;
       ctxTag.style.color = pct > 85 ? '#df5b5b' : pct > 65 ? '#d6c25a' : '#bb8';
+
+      projectEl.textContent  = j.project || '—';
+      modelFull.textContent  = j.model || '—';
+      ctxDetail.textContent  = `${fmtK(ctx)} / ${fmtK(win)} (${pct.toFixed(1)}%)`;
+      ctxFill.style.width    = pct.toFixed(1) + '%';
+      costDetail.textContent = fmtUSD(j.usage && j.usage.cost_usd);
+
+      const prompts = j.prompts || [];
+      if (prompts.length === 0) {
+        promptsEl.innerHTML = '<div class="empty">no prompts yet</div>';
+      } else {
+        promptsEl.innerHTML = '';
+        for (const p of prompts) {
+          const li = document.createElement('li');
+          const ts = p.timestamp ? new Date(p.timestamp).toLocaleString() : '';
+          li.innerHTML = `<span class="ts">${ts}</span><span class="preview"></span>`;
+          li.querySelector('.preview').textContent = p.preview;
+          li.addEventListener('click', () => jumpToPrompt(p.preview));
+          promptsEl.appendChild(li);
+        }
+      }
+      if (badgeEl) {
+        badgeEl.hidden = prompts.length === 0;
+        badgeEl.textContent = prompts.length;
+      }
     } catch (_) {}
   }
 
-  function openPanel() {
-    if (!last) return;
-    projectEl.textContent  = last.project || '—';
-    modelFull.textContent  = last.model || '—';
-    const ctx = last.context_tokens || 0;
-    const win = last.context_window_est || 200000;
-    const pct = Math.min(100, ctx / win * 100);
-    ctxDetail.textContent = `${fmtK(ctx)} / ${fmtK(win)} (${pct.toFixed(1)}%)`;
-    ctxFill.style.width = pct.toFixed(1) + '%';
-    costDetail.textContent = fmtUSD(last.usage && last.usage.cost_usd);
-
-    promptsEl.innerHTML = '';
-    for (const p of (last.prompts || [])) {
-      const li = document.createElement('li');
-      const ts = p.timestamp ? new Date(p.timestamp).toLocaleString() : '';
-      li.innerHTML = `<span class="ts">${ts}</span><span class="preview"></span>`;
-      li.querySelector('.preview').textContent = p.preview;
-      li.addEventListener('click', () => {
-        panelEl.classList.remove('open');
-        jumpToPrompt(p.preview);
-      });
-      promptsEl.appendChild(li);
-    }
-    panelEl.classList.add('open');
-  }
-
-  function closePanel() { panelEl.classList.remove('open'); }
-
-  // Search the terminal scrollback for the start of the prompt and scroll
-  // to it. Uses the search addon that app.js wires up.
   function jumpToPrompt(preview) {
     const search = window.roostSearchAddon;
     if (!search) {
       window.toast && window.toast('Search addon not ready', 'err');
       return;
     }
-    // Take the first 30 chars of the prompt as a search needle.
     let needle = preview.split('\n')[0].trim();
     if (needle.length > 30) needle = needle.slice(0, 30);
     if (!needle) return;
@@ -102,13 +99,23 @@
     }
   }
 
-  modelTag.addEventListener('click', openPanel);
-  ctxTag.addEventListener('click', openPanel);
-  closeEl.addEventListener('click', closePanel);
-  panelEl.addEventListener('click', (e) => { if (e.target === panelEl) closePanel(); });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && panelEl.classList.contains('open')) closePanel();
-  });
+  // --- right-panel tab switching ---
+  // Exposed so the top-bar chips can switch to the AI tab on click.
+  function setTab(name) {
+    document.querySelectorAll('.ftab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+    document.querySelectorAll('.ftab-pane').forEach(p => p.classList.toggle('active', p.id === name + '-pane'));
+    if (name === 'ai') refresh();
+    // The file tree fits to whatever width it currently has; AI doesn't need re-fit.
+    window.dispatchEvent(new Event('resize'));
+  }
+  window.roostSetRightTab = setTab;
+
+  for (const btn of document.querySelectorAll('.ftab')) {
+    btn.addEventListener('click', () => setTab(btn.dataset.tab));
+  }
+
+  modelTag.addEventListener('click', () => setTab('ai'));
+  ctxTag.addEventListener('click', () => setTab('ai'));
 
   refresh();
   setInterval(refresh, 15000);
