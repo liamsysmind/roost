@@ -37,6 +37,34 @@
     return (b / 1024 / 1024 / 1024).toFixed(1) + 'G';
   }
 
+  // --- progress bar ---
+  const progEl     = document.getElementById('fprogress');
+  const progLabel  = progEl.querySelector('.label');
+  const progMeta   = progEl.querySelector('.meta');
+  const progFill   = progEl.querySelector('.fill');
+  let progStart    = 0;
+
+  function showProgress(label) {
+    progStart = Date.now();
+    progLabel.textContent = label;
+    progFill.style.width = '0%';
+    progMeta.textContent = '…';
+    progEl.classList.add('active');
+  }
+  function updateProgress(loaded, total) {
+    const pct = total > 0 ? (loaded / total) * 100 : 0;
+    progFill.style.width = pct.toFixed(1) + '%';
+    const secs = Math.max(0.1, (Date.now() - progStart) / 1000);
+    const rate = loaded / secs;
+    const eta  = total > loaded && rate > 0 ? Math.ceil((total - loaded) / rate) : 0;
+    progMeta.textContent = total > 0
+      ? `${fmtSize(loaded)}/${fmtSize(total)} · ${fmtSize(rate)}/s${eta ? ` · ${eta}s left` : ''}`
+      : `${fmtSize(loaded)} · ${fmtSize(rate)}/s`;
+  }
+  function hideProgress() {
+    setTimeout(() => progEl.classList.remove('active'), 250);
+  }
+
   async function api(method, path, opts = {}) {
     const r = await fetch(path, { method, ...opts });
     if (!r.ok) {
@@ -181,13 +209,57 @@
     }
   }
 
-  function download(path) {
-    const a = document.createElement('a');
-    a.href = '/api/fs/download?path=' + encodeURIComponent(path);
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => a.remove(), 0);
+  // download streams the file via fetch so we can show progress, then
+  // dispatches it to the browser's save flow as a blob. For files larger
+  // than 2 GB the blob path can hit browser memory limits, so we fall back
+  // to a plain <a download> link (no progress, but the browser handles
+  // streaming directly).
+  async function download(path) {
+    const url = '/api/fs/download?path=' + encodeURIComponent(path);
+    const filename = path.split('/').pop();
+    const largeFileBytes = 2 * 1024 * 1024 * 1024;
+
+    let total = 0;
+    try {
+      const head = await fetch(url, { method: 'HEAD' });
+      if (head.ok) total = parseInt(head.headers.get('Content-Length') || '0', 10);
+    } catch (_) {}
+    if (total > largeFileBytes) {
+      // bypass blob — let the browser stream it
+      const a = document.createElement('a');
+      a.href = url; a.download = filename; a.style.display = 'none';
+      document.body.appendChild(a); a.click();
+      setTimeout(() => a.remove(), 0);
+      return;
+    }
+
+    showProgress(`Download ${filename}`);
+    try {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
+      const reader = r.body.getReader();
+      const chunks = [];
+      let loaded = 0;
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        loaded += value.length;
+        updateProgress(loaded, total || loaded);
+      }
+      hideProgress();
+      const blob = new Blob(chunks);
+      const obj = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = obj; a.download = filename; a.style.display = 'none';
+      document.body.appendChild(a); a.click();
+      setTimeout(() => { a.remove(); URL.revokeObjectURL(obj); }, 0);
+    } catch (err) {
+      hideProgress();
+      const msg = 'Download failed: ' + err.message;
+      setStatus(msg, true);
+      window.toast && window.toast(msg, 'err');
+    }
   }
 
   // ---- preview modal ----
@@ -362,22 +434,51 @@
   async function uploadFiles(files) {
     if (!files.length) return;
     const target = absCwd();
+    const totalBytes = files.reduce((s, f) => s + (f.size || 0), 0);
+    const label = files.length === 1
+      ? `Upload ${files[0].name} → ${target}`
+      : `Upload ${files.length} files → ${target}`;
     setStatus(`uploading ${files.length} file(s) → ${target}...`);
+    showProgress(label);
+
     const fd = new FormData();
     fd.append('path', cwd || '/');
     for (const f of files) fd.append('file', f);
+
     try {
-      const r = await fetch('/api/fs/upload', { method: 'POST', body: fd });
-      if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
-      const out = await r.json();
+      const respText = await xhrPost('/api/fs/upload', fd, (loaded) => {
+        updateProgress(loaded, totalBytes);
+      });
+      const out = JSON.parse(respText);
+      hideProgress();
       setStatus(`uploaded ${out.saved?.length || files.length} file(s) → ${target}`);
       window.toast && window.toast(`Uploaded ${out.saved?.length || files.length} file(s) → ${target}`, 'ok');
       refresh();
     } catch (err) {
+      hideProgress();
       const msg = 'Upload failed: ' + err.message;
       setStatus(msg, true);
       window.toast && window.toast(msg, 'err');
     }
+  }
+
+  // XHR-based POST so we get upload.onprogress — fetch can't measure
+  // request body progress in any current browser.
+  function xhrPost(url, body, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(e.loaded, e.total);
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.responseText);
+        else reject(new Error((xhr.responseText || '').trim() || `HTTP ${xhr.status}`));
+      };
+      xhr.onerror = () => reject(new Error('network error'));
+      xhr.ontimeout = () => reject(new Error('timeout'));
+      xhr.open('POST', url);
+      xhr.send(body);
+    });
   }
 
   dropZone.addEventListener('drop', async (e) => {
