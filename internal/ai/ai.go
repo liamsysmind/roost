@@ -309,8 +309,8 @@ func (r *Reader) Active(hintCwd string) (*ActiveSession, error) {
 }
 
 // projectToSlug mirrors Claude Code's slugification of cwd into its
-// projects/ directory name. "/home/williamlee/work/zephyr" becomes
-// "-home-williamlee-work-zephyr".
+// projects/ directory name. "/home/alice/work/zephyr" becomes
+// "-home-alice-work-zephyr".
 func projectToSlug(cwd string) string {
 	if cwd == "" {
 		return ""
