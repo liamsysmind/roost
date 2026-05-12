@@ -25,6 +25,8 @@
       font-size: 0.95rem;
     }
     input:focus { outline: 1px solid #5b8; border-color: #5b8; }
+    input[readonly] { color: #888; background: #1a1a1a; cursor: default; }
+    input[readonly]:focus { outline: none; border-color: #2a2a2a; }
     button {
       width: 100%; margin-top: 1.25rem; padding: 0.6rem; background: #4caf80;
       color: #0a0a0a; border: none; border-radius: 6px; font-weight: 700;
@@ -38,8 +40,12 @@
   <form method="post" action="/login">
     <h1>roost</h1>
     <div class="sub">a workspace your agents can return to</div>
+    <label for="username">Username</label>
+    <input type="text" id="username" name="username" value="roost"
+           autocomplete="username" readonly>
     <label for="password">Password</label>
-    <input type="password" id="password" name="password" autofocus required>
+    <input type="password" id="password" name="password"
+           autocomplete="current-password" autofocus required>
     <button type="submit">Sign in</button>
     <div class="err">{{ERROR}}</div>
   </form>
