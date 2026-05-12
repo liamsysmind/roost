@@ -7,12 +7,25 @@ VERSION  ?= $(shell git describe --tags --dirty --always 2>/dev/null || echo dev
 LDFLAGS  := -s -w -X main.version=$(VERSION)
 GO       ?= go
 
-.PHONY: all build run dev test fmt vet cross clean install
+# vendor/ is gitignored but required at build time (//go:embed all:web bakes
+# it into the binary). xterm.js doubles as the stamp file — if it's present,
+# assume the rest of the bundle is too.
+WEB_VENDOR   := internal/server/web/vendor
+VENDOR_STAMP := $(WEB_VENDOR)/xterm.js
+
+.PHONY: all build run dev test fmt vet cross clean install vendor
 
 all: build
 
+# Fetch xterm.js + JS deps. Auto-runs on first `make build`; re-run to refresh
+# after bumping pins in scripts/fetch-vendor.sh.
+vendor: $(VENDOR_STAMP)
+
+$(VENDOR_STAMP):
+	@./scripts/fetch-vendor.sh
+
 # Standard local build → ./roost
-build:
+build: $(VENDOR_STAMP)
 	$(GO) build -trimpath -ldflags '$(LDFLAGS)' -o roost ./cmd/roost
 
 # Fast iteration: rebuild and restart the local server.
@@ -40,7 +53,7 @@ PLATFORMS := \
 	darwin/amd64 \
 	darwin/arm64
 
-cross:
+cross: $(VENDOR_STAMP)
 	@mkdir -p dist
 	@for p in $(PLATFORMS); do \
 		os=$${p%%/*}; arch=$${p##*/}; \
