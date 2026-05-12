@@ -329,22 +329,29 @@
   // --- drag/drop upload ---
   const dropTextEl = document.getElementById('fdrop-text');
   let dragDepth = 0;
-  fsEl.addEventListener('dragenter', (e) => {
+
+  // Accept file drops anywhere on the page — the file panel just shows
+  // visual feedback. text/html drags (e.g. selecting text) are ignored
+  // because we only intercept events whose dataTransfer.types include 'Files'.
+  const dropZone = document.body;
+
+  dropZone.addEventListener('dragenter', (e) => {
     if (!e.dataTransfer || ![...e.dataTransfer.types].includes('Files')) return;
     e.preventDefault();
     dragDepth++;
-    if (dropTextEl) dropTextEl.textContent = 'drop to upload → ' + absCwd();
+    if (dropTextEl) dropTextEl.textContent = 'drop anywhere → ' + absCwd();
     fsEl.classList.add('dragging-over');
   });
-  fsEl.addEventListener('dragleave', () => {
+  dropZone.addEventListener('dragleave', () => {
     dragDepth--;
     if (dragDepth <= 0) { dragDepth = 0; fsEl.classList.remove('dragging-over'); }
   });
-  fsEl.addEventListener('dragover', (e) => {
+  dropZone.addEventListener('dragover', (e) => {
     if (![...(e.dataTransfer?.types || [])].includes('Files')) return;
     e.preventDefault();
   });
-  fsEl.addEventListener('drop', async (e) => {
+  dropZone.addEventListener('drop', async (e) => {
+    if (![...(e.dataTransfer?.types || [])].includes('Files')) return;
     e.preventDefault();
     dragDepth = 0;
     fsEl.classList.remove('dragging-over');
