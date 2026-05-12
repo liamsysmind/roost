@@ -16,13 +16,17 @@ import (
 	"time"
 )
 
-// Pricing in USD per million tokens. Approximate, updated for the Claude 4
-// family. The Cost calculator uses these to convert tokens to dollars.
+// Pricing in USD per million tokens, "standard tier" rates as of the
+// Claude 4 family. The cost calculator multiplies by 2× when a single
+// turn's context exceeds 200K (long-context tier) on models that support
+// 1M context (Opus / Sonnet).
 type Pricing struct {
-	Input      float64
-	Output     float64
-	CacheWrite float64
-	CacheRead  float64
+	Input          float64
+	Output         float64
+	CacheWrite5m   float64
+	CacheWrite1h   float64
+	CacheRead      float64
+	HasLongContext bool // 200K+ turns billed at 2×
 }
 
 // modelPricing returns the price table for a model, falling back to Opus 4
@@ -31,15 +35,19 @@ func modelPricing(model string) Pricing {
 	m := strings.ToLower(model)
 	switch {
 	case strings.Contains(m, "haiku"):
-		return Pricing{Input: 0.80, Output: 4.00, CacheWrite: 1.00, CacheRead: 0.08}
+		return Pricing{Input: 0.80, Output: 4.00, CacheWrite5m: 1.00, CacheWrite1h: 1.60, CacheRead: 0.08, HasLongContext: false}
 	case strings.Contains(m, "sonnet"):
-		return Pricing{Input: 3.00, Output: 15.00, CacheWrite: 3.75, CacheRead: 0.30}
+		return Pricing{Input: 3.00, Output: 15.00, CacheWrite5m: 3.75, CacheWrite1h: 6.00, CacheRead: 0.30, HasLongContext: true}
 	case strings.Contains(m, "opus"):
-		return Pricing{Input: 15.00, Output: 75.00, CacheWrite: 18.75, CacheRead: 1.50}
+		return Pricing{Input: 15.00, Output: 75.00, CacheWrite5m: 18.75, CacheWrite1h: 30.00, CacheRead: 1.50, HasLongContext: true}
 	default:
-		return Pricing{Input: 15.00, Output: 75.00, CacheWrite: 18.75, CacheRead: 1.50}
+		return Pricing{Input: 15.00, Output: 75.00, CacheWrite5m: 18.75, CacheWrite1h: 30.00, CacheRead: 1.50, HasLongContext: true}
 	}
 }
+
+// longContextThreshold marks the boundary between "standard" and "long"
+// pricing tiers (per-turn input >= this triggers the 2× multiplier).
+const longContextThreshold = 200_000
 
 // Reader scans Claude Code state files.
 type Reader struct {
@@ -53,12 +61,15 @@ func NewReader() *Reader {
 
 // Usage is an aggregated tally for one or more JSONL files.
 type Usage struct {
-	InputTokens      int64   `json:"input_tokens"`
-	OutputTokens     int64   `json:"output_tokens"`
-	CacheWriteTokens int64   `json:"cache_write_tokens"`
-	CacheReadTokens  int64   `json:"cache_read_tokens"`
-	Messages         int     `json:"messages"`
-	Cost             float64 `json:"cost_usd"`
+	InputTokens       int64   `json:"input_tokens"`
+	OutputTokens      int64   `json:"output_tokens"`
+	CacheWriteTokens  int64   `json:"cache_write_tokens"`
+	CacheWrite5m      int64   `json:"cache_write_5m_tokens"`
+	CacheWrite1h      int64   `json:"cache_write_1h_tokens"`
+	CacheReadTokens   int64   `json:"cache_read_tokens"`
+	Messages          int     `json:"messages"`
+	LongContextTurns  int     `json:"long_context_turns"`
+	Cost              float64 `json:"cost_usd"`
 }
 
 // SessionInfo summarises one project session file.
@@ -79,6 +90,9 @@ type rawEvent struct {
 }
 
 // assistantMessage is the shape we care about when type == "assistant".
+// CacheCreation breaks the cache-write total into 5-minute and 1-hour
+// tiers (different prices). Older messages may not include it; we fall
+// back to treating CacheCreationInputTokens as all-5m in that case.
 type assistantMessage struct {
 	Model string `json:"model"`
 	Usage *struct {
@@ -86,7 +100,46 @@ type assistantMessage struct {
 		OutputTokens             int64 `json:"output_tokens"`
 		CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
 		CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+		CacheCreation *struct {
+			Ephemeral5mInputTokens int64 `json:"ephemeral_5m_input_tokens"`
+			Ephemeral1hInputTokens int64 `json:"ephemeral_1h_input_tokens"`
+		} `json:"cache_creation"`
+		ServiceTier string `json:"service_tier"`
 	} `json:"usage"`
+}
+
+// messageCost prices a single assistant turn, accounting for cache-write
+// tier (5m vs 1h) and long-context (200K+) tier multiplier.
+func messageCost(u *struct {
+	InputTokens              int64 `json:"input_tokens"`
+	OutputTokens             int64 `json:"output_tokens"`
+	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+	CacheCreation *struct {
+		Ephemeral5mInputTokens int64 `json:"ephemeral_5m_input_tokens"`
+		Ephemeral1hInputTokens int64 `json:"ephemeral_1h_input_tokens"`
+	} `json:"cache_creation"`
+	ServiceTier string `json:"service_tier"`
+}, p Pricing) (cost float64, longContext bool) {
+	var write5m, write1h int64
+	if u.CacheCreation != nil {
+		write5m = u.CacheCreation.Ephemeral5mInputTokens
+		write1h = u.CacheCreation.Ephemeral1hInputTokens
+	} else {
+		write5m = u.CacheCreationInputTokens
+	}
+	mult := 1.0
+	contextIn := u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
+	if p.HasLongContext && contextIn > longContextThreshold {
+		mult = 2.0
+		longContext = true
+	}
+	cost = (float64(u.InputTokens)*p.Input +
+		float64(u.OutputTokens)*p.Output +
+		float64(write5m)*p.CacheWrite5m +
+		float64(write1h)*p.CacheWrite1h +
+		float64(u.CacheReadInputTokens)*p.CacheRead) / 1e6 * mult
+	return
 }
 
 // userMessage is the shape we care about when type == "user".
@@ -131,11 +184,18 @@ func readFile(path string, since time.Time) (Usage, error) {
 		u.OutputTokens += usg.OutputTokens
 		u.CacheWriteTokens += usg.CacheCreationInputTokens
 		u.CacheReadTokens += usg.CacheReadInputTokens
+		if usg.CacheCreation != nil {
+			u.CacheWrite5m += usg.CacheCreation.Ephemeral5mInputTokens
+			u.CacheWrite1h += usg.CacheCreation.Ephemeral1hInputTokens
+		} else {
+			u.CacheWrite5m += usg.CacheCreationInputTokens
+		}
 		u.Messages++
-		u.Cost += (float64(usg.InputTokens)*p.Input +
-			float64(usg.OutputTokens)*p.Output +
-			float64(usg.CacheCreationInputTokens)*p.CacheWrite +
-			float64(usg.CacheReadInputTokens)*p.CacheRead) / 1e6
+		cost, longCtx := messageCost(usg, p)
+		u.Cost += cost
+		if longCtx {
+			u.LongContextTurns++
+		}
 	}
 	return u, sc.Err()
 }
@@ -250,11 +310,18 @@ func (r *Reader) readActive(slug, file string, mtime time.Time) (*ActiveSession,
 			out.Usage.OutputTokens += u.OutputTokens
 			out.Usage.CacheWriteTokens += u.CacheCreationInputTokens
 			out.Usage.CacheReadTokens += u.CacheReadInputTokens
+			if u.CacheCreation != nil {
+				out.Usage.CacheWrite5m += u.CacheCreation.Ephemeral5mInputTokens
+				out.Usage.CacheWrite1h += u.CacheCreation.Ephemeral1hInputTokens
+			} else {
+				out.Usage.CacheWrite5m += u.CacheCreationInputTokens
+			}
 			out.Usage.Messages++
-			out.Usage.Cost += (float64(u.InputTokens)*p.Input +
-				float64(u.OutputTokens)*p.Output +
-				float64(u.CacheCreationInputTokens)*p.CacheWrite +
-				float64(u.CacheReadInputTokens)*p.CacheRead) / 1e6
+			cost, longCtx := messageCost(u, p)
+			out.Usage.Cost += cost
+			if longCtx {
+				out.Usage.LongContextTurns++
+			}
 			// Latest assistant message's per-turn usage is the best proxy
 			// for the model's current context view.
 			out.ContextTokens = u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
