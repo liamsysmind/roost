@@ -97,6 +97,45 @@
 
   fit.fit();
 
+  // Ctrl+C / Ctrl+Shift+C / Ctrl+Shift+V handling.
+  //
+  // Standard terminal-in-browser ergonomics: by default xterm.js sends every
+  // Ctrl+C straight to the PTY as SIGINT, which loses the OS's "copy" muscle
+  // memory entirely. Distinguish by selection state.
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.type !== 'keydown') return true;
+
+    // Ctrl+C with selection → copy, do NOT forward as SIGINT.
+    if (e.ctrlKey && !e.shiftKey && (e.key === 'c' || e.key === 'C') && term.hasSelection()) {
+      const sel = term.getSelection();
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(sel).catch(() => {});
+      }
+      term.clearSelection();
+      return false;
+    }
+
+    // Ctrl+Shift+C → always copy whatever's selected.
+    if (e.ctrlKey && e.shiftKey && (e.key === 'C' || e.key === 'c')) {
+      if (term.hasSelection() && navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+      }
+      return false;
+    }
+
+    // Ctrl+Shift+V → paste clipboard into the PTY.
+    if (e.ctrlKey && e.shiftKey && (e.key === 'V' || e.key === 'v')) {
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        navigator.clipboard.readText().then((t) => {
+          if (t && ws.readyState === WebSocket.OPEN) ws.send(encoder.encode(t));
+        }).catch(() => {});
+      }
+      return false;
+    }
+
+    return true;
+  });
+
   const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsURL = `${wsProto}//${location.host}/ws/terminal/${encodeURIComponent(sessionID)}`;
   const ws = new WebSocket(wsURL);
