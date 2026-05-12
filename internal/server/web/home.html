@@ -77,13 +77,9 @@
 <body>
   <header>
     <span class="brand">roost</span>
-    <div style="display:flex;align-items:center;gap:0.6rem">
-      <span id="ai-cost" title="Claude Code spend today (click to refresh)"
-            style="color:#cc9;font-size:0.78rem;font-family:ui-monospace,monospace;cursor:pointer">$—</span>
-      <form method="post" action="/logout">
-        <button type="submit">logout</button>
-      </form>
-    </div>
+    <form method="post" action="/logout">
+      <button type="submit">logout</button>
+    </form>
   </header>
   <main>
     <h1>Your sessions</h1>
@@ -97,7 +93,6 @@
   </main>
   <script src="/toast.js"></script>
   <script src="/home.js"></script>
-  <script src="/cost.js"></script>
   <script src="/notify.js"></script>
 </body>
 </html>

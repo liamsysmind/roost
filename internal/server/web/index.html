@@ -214,8 +214,6 @@
             style="color:#8aa;cursor:pointer">—</span>
       <span id="ai-ctx" class="tag" title="Context tokens this turn / window estimate"
             style="color:#bb8;cursor:pointer">—</span>
-      <span id="ai-cost" class="tag" title="Claude Code spend today (click to refresh)"
-            style="color:#cc9;cursor:pointer">$—</span>
       <a href="/" target="_blank" rel="noopener" title="open a new session in a new tab">+ new</a>
       <form method="post" action="/logout" style="margin:0">
         <button type="submit" title="sign out">logout</button>
@@ -249,7 +247,8 @@
           <div><span class="k">model</span><span class="v" id="ai-model-full">—</span></div>
           <div><span class="k">context</span><span class="v" id="ai-ctx-detail">—</span></div>
           <div class="ctx-bar"><div class="fill" id="ai-ctx-fill"></div></div>
-          <div><span class="k">cost</span><span class="v" id="ai-cost-detail">—</span></div>
+          <div><span class="k">messages</span><span class="v" id="ai-msgs-detail">—</span></div>
+          <div><span class="k">tokens</span><span class="v" id="ai-tokens-detail">—</span></div>
         </div>
         <div class="hint">click a prompt to scroll the terminal back to it</div>
         <ul class="prompts" id="ai-prompts"></ul>
@@ -274,7 +273,6 @@
   <script src="/toast.js"></script>
   <script src="/app.js"></script>
   <script src="/fs.js"></script>
-  <script src="/cost.js"></script>
   <script src="/ai.js"></script>
   <script src="/notify.js"></script>
 </body>
