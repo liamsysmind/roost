@@ -5,13 +5,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
 
 type Config struct {
-	Auth   Auth   `toml:"auth"`
-	Server Server `toml:"server"`
+	Auth    Auth    `toml:"auth"`
+	Server  Server  `toml:"server"`
+	Session Session `toml:"session"`
 }
 
 type Auth struct {
@@ -23,12 +26,71 @@ type Server struct {
 	Addr string `toml:"addr"`
 }
 
+// Session configures persistent terminal sessions.
+//
+//   - LogDir   : where per-session output logs are stored. The log file
+//                is append-only and effectively unbounded — your full
+//                scrollback persists across reconnects until you delete
+//                the file.
+//   - ReplayKB : how many trailing KB of the log are sent to a client
+//                when it attaches. 0 means "send the whole log".
+//                Default 4096 (4 MB).
+//   - IdleTTL  : after the last client detaches, the session is closed
+//                if it stays idle this long. "0" disables auto-close.
+type Session struct {
+	LogDir   string `toml:"log_dir"`
+	ReplayKB int64  `toml:"replay_kb"`
+	IdleTTL  string `toml:"idle_ttl"`
+}
+
 func DefaultPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "config.toml"
 	}
 	return filepath.Join(home, ".config", "roost", "config.toml")
+}
+
+func defaultLogDir() string {
+	if x := os.Getenv("XDG_DATA_HOME"); x != "" {
+		return filepath.Join(x, "roost", "sessions")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "sessions"
+	}
+	return filepath.Join(home, ".local", "share", "roost", "sessions")
+}
+
+// ResolvedSession returns the Session config with defaults filled in and
+// paths expanded.
+type ResolvedSession struct {
+	LogDir      string
+	ReplayBytes int64
+	IdleTTL     time.Duration
+}
+
+func (c *Config) ResolveSession() (*ResolvedSession, error) {
+	out := &ResolvedSession{
+		LogDir:      c.Session.LogDir,
+		ReplayBytes: c.Session.ReplayKB * 1024,
+		IdleTTL:     24 * time.Hour,
+	}
+	if out.LogDir == "" {
+		out.LogDir = defaultLogDir()
+	}
+	out.LogDir = expandHome(out.LogDir)
+	if c.Session.ReplayKB == 0 {
+		out.ReplayBytes = 4 * 1024 * 1024
+	}
+	if c.Session.IdleTTL != "" {
+		d, err := time.ParseDuration(c.Session.IdleTTL)
+		if err != nil {
+			return nil, fmt.Errorf("session.idle_ttl: %w", err)
+		}
+		out.IdleTTL = d
+	}
+	return out, nil
 }
 
 func Load(path string) (*Config, error) {
@@ -58,4 +120,15 @@ func Save(path string, c *Config) error {
 	}
 	defer f.Close()
 	return toml.NewEncoder(f).Encode(c)
+}
+
+func expandHome(p string) string {
+	if !strings.HasPrefix(p, "~/") {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return p
+	}
+	return filepath.Join(home, p[2:])
 }

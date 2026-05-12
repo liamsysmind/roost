@@ -17,6 +17,7 @@ import (
 	"github.com/liamsysmind/roost/internal/auth"
 	"github.com/liamsysmind/roost/internal/config"
 	"github.com/liamsysmind/roost/internal/server"
+	"github.com/liamsysmind/roost/internal/session"
 )
 
 const version = "0.0.0-dev"
@@ -72,7 +73,18 @@ func runServe(args []string) {
 		log.Fatal(err)
 	}
 
-	log.Fatal(server.New(am, cfg.Server.Addr).Run())
+	sessCfg, err := cfg.ResolveSession()
+	if err != nil {
+		log.Fatal(err)
+	}
+	sm := session.NewManager(session.Config{
+		LogDir:      sessCfg.LogDir,
+		ReplayBytes: sessCfg.ReplayBytes,
+		IdleTTL:     sessCfg.IdleTTL,
+	})
+	defer sm.Shutdown()
+
+	log.Fatal(server.New(am, sm, cfg.Server.Addr).Run())
 }
 
 func runSetup(args []string) {
@@ -133,6 +145,12 @@ func runSetup(args []string) {
 			SessionSecret: hex.EncodeToString(secret[:]),
 		},
 		Server: config.Server{Addr: "127.0.0.1:8080"},
+		Session: config.Session{
+			// LogDir empty → resolves to $XDG_DATA_HOME/roost/sessions
+			// or ~/.local/share/roost/sessions.
+			ReplayKB: 4096, // 4 MB replay on attach; full log still on disk.
+			IdleTTL:  "24h",
+		},
 	}
 	if err := config.Save(*cfgPath, cfg); err != nil {
 		log.Fatal(err)

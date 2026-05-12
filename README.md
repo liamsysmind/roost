@@ -59,13 +59,20 @@ ssh -L 8080:localhost:8080 user@your-dev-box
 # Then open http://localhost:8080 in your browser.
 ```
 
-### Feature scope today (W1)
+### Feature scope today (W1 + W1.5)
 
 - Password-gated single-user login
 - Cookie session (in-memory, 24h TTL)
 - Full xterm.js terminal connected to a PTY on the server
 - WebGL renderer + window resize
 - Binds to `127.0.0.1` only — designed for SSH tunnel deployment
+- **Persistent terminal sessions**: close your laptop, reopen the page tomorrow,
+  the shell is still running and the scrollback is replayed.
+- **Multi-tab sync**: open the same session in two tabs, both see the same output.
+- **Effectively unbounded scrollback**: every session writes to a disk log file
+  under `~/.local/share/roost/sessions/`. The full log grows with disk space.
+  How much of the tail is replayed when a new client attaches is configured
+  via `session.replay_kb` (default 4 MB; set to `0` to replay the entire log).
 
 ## Milestones
 

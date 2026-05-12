@@ -9,22 +9,23 @@ import (
 	"strings"
 
 	"github.com/liamsysmind/roost/internal/auth"
-	"github.com/liamsysmind/roost/internal/terminal"
+	"github.com/liamsysmind/roost/internal/session"
 )
 
 //go:embed all:web
 var webFS embed.FS
 
 type Server struct {
-	Auth    *auth.Manager
-	Addr    string
-	handler http.Handler
-	static  fs.FS
+	Auth     *auth.Manager
+	Sessions *session.Manager
+	Addr     string
+	handler  http.Handler
+	static   fs.FS
 }
 
-func New(a *auth.Manager, addr string) *Server {
+func New(a *auth.Manager, sm *session.Manager, addr string) *Server {
 	static, _ := fs.Sub(webFS, "web")
-	s := &Server{Auth: a, Addr: addr, static: static}
+	s := &Server{Auth: a, Sessions: sm, Addr: addr, static: static}
 	s.setupRoutes()
 	return s
 }
@@ -36,7 +37,11 @@ func (s *Server) setupRoutes() {
 	mux.HandleFunc("POST /logout", s.handleLogout)
 	mux.HandleFunc("GET /vendor/", s.handleStatic)
 	mux.HandleFunc("GET /app.js", s.handleStatic)
-	mux.HandleFunc("GET /ws/terminal", terminal.HandleWS)
+
+	wsh := &session.Handler{Manager: s.Sessions}
+	mux.HandleFunc("GET /ws/terminal", wsh.Serve)
+	mux.HandleFunc("GET /ws/terminal/{id}", wsh.Serve)
+
 	mux.HandleFunc("GET /", s.handleIndex)
 
 	s.handler = s.authMiddleware(mux)
@@ -50,7 +55,6 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		}
 		c, err := r.Cookie(auth.CookieName)
 		if err != nil || !s.Auth.ValidateSession(c.Value) {
-			// API / WS clients get 401; browsers get a redirect.
 			if strings.HasPrefix(r.URL.Path, "/ws/") || strings.HasPrefix(r.URL.Path, "/api/") {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
