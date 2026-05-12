@@ -22,7 +22,7 @@ import (
 	"github.com/liamsysmind/roost/internal/session"
 )
 
-const version = "0.0.0-dev"
+var version = "0.0.0-dev"
 
 func main() {
 	if len(os.Args) < 2 {
