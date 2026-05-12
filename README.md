@@ -105,6 +105,30 @@ It prints a JSON block to add to `~/.claude/settings.json`. Once configured,
 Claude Code's `Stop` hook fires a curl POST to `roost`, which fan-outs over
 SSE to every connected browser. Native OS toast lights up.
 
+## Shared machine, separate instances
+
+roost is deliberately **single-user**. If two people use the same Linux box,
+each runs their own `roost serve` on a different port, with their own config,
+their own session logs, their own AI dashboard.
+
+```
+[ shared linux box ]
+
+  alice (UID 1001)                         bob (UID 1002)
+   ~/.config/roost/config.toml              ~/.config/roost/config.toml
+   ~/.local/share/roost/sessions/           ~/.local/share/roost/sessions/
+   roost serve --addr 127.0.0.1:8081        roost serve --addr 127.0.0.1:8082
+                                            
+   from her laptop:                         from his laptop:
+   ssh -L 8081:localhost:8081 alice@host    ssh -L 8082:localhost:8082 bob@host
+   open http://localhost:8081               open http://localhost:8082
+```
+
+UNIX UIDs do the isolation — alice's roost runs as `alice`, can only touch
+her files, sees only her tmux sessions, reads only her `~/.claude/`. roost
+does not impersonate or share state across users. Pick a distinct port per
+user (override via `[server] addr` in each user's config or `--addr` flag).
+
 ## Deploying as a service
 
 ### Linux (systemd, user unit)
@@ -125,8 +149,9 @@ launchctl load ~/Library/LaunchAgents/com.liamsysmind.roost.plist
 
 ## What this isn't
 
-- **Not multi-tenant.** Single password, single user. Add a reverse-proxy
-  with its own auth if you want per-user accounts.
+- **Not multi-tenant — and never will be.** One binary serves one person.
+  Two people on the same machine = two independent instances on different
+  ports. UNIX UIDs handle isolation; roost stays simple.
 - **Not exposed to the internet by default.** It binds to `127.0.0.1`. You
   reach it via SSH tunnel or your private network (Tailscale, ZeroTier, …).
 - **Not VS Code.** No editor pane. The file tree is for transferring artifacts;
