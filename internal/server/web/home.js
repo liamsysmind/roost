@@ -35,7 +35,8 @@
       body: 'to=' + encodeURIComponent(to),
     });
     if (!r.ok) {
-      alert('rename failed: ' + (await r.text()).trim());
+      const msg = 'Rename failed: ' + (await r.text()).trim();
+      window.toast ? window.toast(msg, 'err') : alert(msg);
       return;
     }
     load();
@@ -45,7 +46,8 @@
     if (!confirm(`Delete session "${id}"? This closes any running shell and removes its log.`)) return;
     const r = await fetch(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
     if (!r.ok) {
-      alert('delete failed: ' + (await r.text()).trim());
+      const msg = 'Delete failed: ' + (await r.text()).trim();
+      window.toast ? window.toast(msg, 'err') : alert(msg);
       return;
     }
     load();

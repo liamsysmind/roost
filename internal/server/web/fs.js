@@ -284,12 +284,18 @@
     if (e.key === 'Escape' && previewEl.classList.contains('open')) closePreview();
   });
 
+  function reportError(prefix, e) {
+    const msg = prefix + ': ' + e.message;
+    setStatus(msg, true);
+    window.toast && window.toast(msg, 'err');
+  }
+
   async function rename(path) {
     const oldName = path.split('/').pop();
     const next = prompt('Rename to (within same directory):', oldName);
     if (!next || next === oldName) return;
     if (next.includes('/')) {
-      alert('cannot include "/" — drag the item if you want to move directories');
+      window.toast && window.toast('Name cannot include "/"', 'err');
       return;
     }
     const parent = path.slice(0, path.length - oldName.length);
@@ -300,7 +306,7 @@
         body: 'from=' + encodeURIComponent(path) + '&to=' + encodeURIComponent(to),
       });
       refresh();
-    } catch (e) { setStatus(e.message, true); }
+    } catch (e) { reportError('Rename failed', e); }
   }
 
   async function remove(path, isDir) {
@@ -309,13 +315,16 @@
       const url = '/api/fs/remove?path=' + encodeURIComponent(path) + (isDir ? '&recursive=1' : '');
       await api('DELETE', url);
       refresh();
-    } catch (e) { setStatus(e.message, true); }
+    } catch (e) { reportError('Delete failed', e); }
   }
 
   async function mkdir() {
     const name = prompt('Folder name:');
     if (!name) return;
-    if (name.includes('/')) { alert('name cannot contain "/"'); return; }
+    if (name.includes('/')) {
+      window.toast && window.toast('Name cannot include "/"', 'err');
+      return;
+    }
     const target = (cwd || '') + '/' + name;
     try {
       await api('POST', '/api/fs/mkdir', {
@@ -323,7 +332,7 @@
         body: 'path=' + encodeURIComponent(target),
       });
       refresh();
-    } catch (e) { setStatus(e.message, true); }
+    } catch (e) { reportError('Mkdir failed', e); }
   }
 
   // --- drag/drop upload ---
@@ -362,9 +371,12 @@
       if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
       const out = await r.json();
       setStatus(`uploaded ${out.saved?.length || files.length} file(s) → ${target}`);
+      window.toast && window.toast(`Uploaded ${out.saved?.length || files.length} file(s) → ${target}`, 'ok');
       refresh();
     } catch (err) {
-      setStatus('upload failed: ' + err.message, true);
+      const msg = 'Upload failed: ' + err.message;
+      setStatus(msg, true);
+      window.toast && window.toast(msg, 'err');
     }
   }
 
