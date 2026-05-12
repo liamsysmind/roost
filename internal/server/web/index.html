@@ -157,6 +157,45 @@
     #preview .body iframe { width: 100%; height: 80vh; border: 0; background: #fff; }
     #preview .body .msg { color: #aaa; margin: auto; font-size: 0.85rem; text-align: center; padding: 2rem; }
     #preview .body .msg.err { color: #f88; }
+
+    /* AI session panel */
+    #ai-panel {
+      position: fixed; inset: 0; display: none;
+      align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.65); z-index: 25; backdrop-filter: blur(3px);
+    }
+    #ai-panel.open { display: flex; }
+    #ai-panel .box {
+      background: #111; border: 1px solid #2a2a2a; border-radius: 8px;
+      width: min(720px, 92vw); max-height: 85vh; display: flex; flex-direction: column;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.6); overflow: hidden;
+    }
+    #ai-panel .head { display: flex; align-items: center; gap: 0.5rem;
+      padding: 0.55rem 0.9rem; border-bottom: 1px solid #1c1c1c;
+      font-size: 0.85rem; color: #cdb; }
+    #ai-panel .head .title { flex: 1; font-weight: 600; }
+    #ai-panel .head button {
+      background: transparent; color: #9aa; border: 1px solid #333;
+      padding: 3px 9px; border-radius: 4px; font-size: 0.72rem; cursor: pointer;
+    }
+    #ai-panel .head button:hover { color: #fff; border-color: #555; }
+    #ai-panel .meta { padding: 0.8rem 1rem; font-size: 0.78rem; color: #aaa; }
+    #ai-panel .meta > div { display: flex; gap: 0.6rem; margin: 0.2rem 0; }
+    #ai-panel .meta .k { color: #888; min-width: 7rem; }
+    #ai-panel .meta .v { color: #cde; font-family: ui-monospace, monospace; word-break: break-all; }
+    #ai-panel .ctx-bar { background: #1a1a1a; height: 6px; border-radius: 3px; margin: 0.4rem 0 0.6rem 0; overflow: hidden; }
+    #ai-panel .ctx-bar .fill { background: linear-gradient(90deg, #4caf80, #d6c25a, #df5b5b);
+      height: 100%; width: 0%; transition: width 0.2s; }
+    #ai-panel .hint { padding: 0 1rem; color: #666; font-size: 0.72rem; }
+    #ai-panel .prompts { list-style: none; margin: 0.5rem 0 0 0; padding: 0; overflow-y: auto; }
+    #ai-panel .prompts li {
+      padding: 0.5rem 1rem; border-top: 1px solid #1c1c1c; cursor: pointer;
+      transition: background 0.1s;
+    }
+    #ai-panel .prompts li:hover { background: #1a1a1a; }
+    #ai-panel .prompts .ts { color: #688; font-size: 0.7rem; font-family: ui-monospace, monospace;
+      margin-right: 0.6rem; }
+    #ai-panel .prompts .preview { color: #cde; font-size: 0.82rem; }
   </style>
 </head>
 <body>
@@ -167,7 +206,12 @@
       <button id="session-rename" class="icon-btn" title="rename this session">rename</button>
     </div>
     <div class="right">
-      <span id="ai-cost" class="tag" title="Claude Code spend today (click to refresh)" style="color:#cc9;cursor:pointer">$—</span>
+      <span id="ai-model" class="tag" title="Click to open the AI session panel"
+            style="color:#8aa;cursor:pointer">—</span>
+      <span id="ai-ctx" class="tag" title="Context tokens this turn / window estimate"
+            style="color:#bb8;cursor:pointer">—</span>
+      <span id="ai-cost" class="tag" title="Claude Code spend today (click to refresh)"
+            style="color:#cc9;cursor:pointer">$—</span>
       <a href="/" target="_blank" rel="noopener" title="open a new session in a new tab">+ new</a>
       <form method="post" action="/logout" style="margin:0">
         <button type="submit" title="sign out">logout</button>
@@ -202,13 +246,32 @@
       <div class="body"></div>
     </div>
   </div>
+  <div id="ai-panel">
+    <div class="box">
+      <div class="head">
+        <span class="title">AI session</span>
+        <button class="close" title="close">✕</button>
+      </div>
+      <div class="meta">
+        <div><span class="k">project</span><span class="v" id="ai-project">—</span></div>
+        <div><span class="k">model</span><span class="v" id="ai-model-full">—</span></div>
+        <div><span class="k">context</span><span class="v" id="ai-ctx-detail">—</span></div>
+        <div class="ctx-bar"><div class="fill" id="ai-ctx-fill"></div></div>
+        <div><span class="k">cost (this session)</span><span class="v" id="ai-cost-detail">—</span></div>
+      </div>
+      <div class="hint">click a prompt to find it in the terminal scrollback</div>
+      <ul class="prompts" id="ai-prompts"></ul>
+    </div>
+  </div>
   <script src="/vendor/xterm.js"></script>
   <script src="/vendor/addon-fit.js"></script>
   <script src="/vendor/addon-webgl.js"></script>
+  <script src="/vendor/addon-search.js"></script>
   <script src="/toast.js"></script>
   <script src="/app.js"></script>
   <script src="/fs.js"></script>
   <script src="/cost.js"></script>
+  <script src="/ai.js"></script>
   <script src="/notify.js"></script>
 </body>
 </html>
