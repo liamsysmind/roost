@@ -77,11 +77,14 @@ func runServe(args []string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	sm := session.NewManager(session.Config{
+	sm, err := session.NewManager(session.Config{
 		LogDir:      sessCfg.LogDir,
 		ReplayBytes: sessCfg.ReplayBytes,
 		IdleTTL:     sessCfg.IdleTTL,
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer sm.Shutdown()
 
 	log.Fatal(server.New(am, sm, cfg.Server.Addr).Run())

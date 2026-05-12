@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -40,7 +41,7 @@ type Config struct {
 	Shell       string        // override $SHELL
 }
 
-func newSession(id string, cfg Config) (*Session, error) {
+func newSession(id string, cfg Config, tmuxConfPath string, tmuxAlreadyExists bool) (*Session, error) {
 	if err := os.MkdirAll(cfg.LogDir, 0o700); err != nil {
 		return nil, err
 	}
@@ -50,12 +51,11 @@ func newSession(id string, cfg Config) (*Session, error) {
 		return nil, err
 	}
 
-	// If we're resuming an existing log (e.g. the previous shell exited
-	// or the server restarted), write a visible banner so the user can
-	// tell where the old output ends and the fresh shell begins.
-	// Without this, replaying the log shows the old shell's last prompt
-	// immediately next to the new shell's first prompt — confusing.
-	if lg.Size() > 0 {
+	// Write a banner only when a brand-new tmux session is about to spawn
+	// a fresh shell into an existing log. If we're attaching to a live tmux
+	// session, the screen is just being redrawn — that's true continuity,
+	// no banner needed.
+	if !tmuxAlreadyExists && lg.Size() > 0 {
 		banner := []byte(fmt.Sprintf("\r\n\x1b[2;33m── new shell %s ──\x1b[0m\r\n",
 			time.Now().Format("2006-01-02 15:04:05")))
 		_, _ = lg.Write(banner)
@@ -68,12 +68,33 @@ func newSession(id string, cfg Config) (*Session, error) {
 			shell = "/bin/bash"
 		}
 	}
-	cmd := exec.Command(shell, "-l")
-	cmd.Env = append(os.Environ(),
+
+	// Spawn tmux. -A on new-session means "attach if exists, create otherwise".
+	// We pass the shell explicitly so a brand-new tmux session uses our chosen
+	// login shell instead of whatever tmux's default-shell points at.
+	cmd := exec.Command("tmux",
+		"-f", tmuxConfPath,
+		"new-session", "-A",
+		"-s", id,
+		"-x", "200", "-y", "50",
+		"--", shell, "-l",
+	)
+	// Strip TMUX from the environment so tmux doesn't refuse to start nested
+	// or print a "sessions should be nested" warning.
+	env := make([]string, 0, len(os.Environ())+3)
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "TMUX=") || strings.HasPrefix(e, "TMUX_PANE=") {
+			continue
+		}
+		env = append(env, e)
+	}
+	env = append(env,
 		"TERM=xterm-256color",
 		"ROOST=1",
 		"ROOST_SESSION="+id,
 	)
+	cmd.Env = env
+
 	tty, err := pty.Start(cmd)
 	if err != nil {
 		_ = lg.Close()

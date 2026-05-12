@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -14,28 +15,88 @@ import (
 type Manager struct {
 	cfg Config
 
+	tmuxConfPath string
+
 	mu       sync.Mutex
 	sessions map[string]*Session
 
 	stop chan struct{}
 }
 
+// roostTmuxConf is the embedded tmux configuration used for every session.
+//
+// Why these specific settings:
+//   - status off          : hides tmux's status bar so the UI looks like a plain
+//                           shell. Users shouldn't have to know tmux is there.
+//   - unbind-key -a       : drops every default key binding (including C-b),
+//                           so the prefix can never be hit by accident. Keys
+//                           flow straight to the shell.
+//   - history-limit 0     : tmux scrollback off — roost's own log file is the
+//                           authoritative history and is replayed on attach.
+//   - escape-time 0       : avoids the 500ms delay after ESC that breaks vim/AI
+//                           agents.
+//   - default-terminal    : matches what most modern terminals advertise.
+//   - destroy-unattached off : keep the session alive even when no client is
+//                           attached. This is the whole point.
+const roostTmuxConf = `
+set-option -g status off
+unbind-key -a
+set-option -g history-limit 0
+set-option -sg escape-time 0
+set-option -g default-terminal "tmux-256color"
+set-option -g destroy-unattached off
+`
+
 // NewManager starts a manager and its GC loop. Caller should Shutdown on exit.
-func NewManager(cfg Config) *Manager {
+// Returns an error if tmux is unavailable; roost requires it for shell
+// persistence (without tmux, shells would die when the WS disconnects).
+func NewManager(cfg Config) (*Manager, error) {
 	if cfg.IdleTTL <= 0 {
 		cfg.IdleTTL = 24 * time.Hour
 	}
+	if _, err := exec.LookPath("tmux"); err != nil {
+		return nil, fmt.Errorf("tmux not found in PATH; roost requires tmux for session persistence (apt install tmux / brew install tmux): %w", err)
+	}
+	confPath, err := writeTmuxConf()
+	if err != nil {
+		return nil, fmt.Errorf("write tmux conf: %w", err)
+	}
 	m := &Manager{
-		cfg:      cfg,
-		sessions: map[string]*Session{},
-		stop:     make(chan struct{}),
+		cfg:          cfg,
+		tmuxConfPath: confPath,
+		sessions:     map[string]*Session{},
+		stop:         make(chan struct{}),
 	}
 	go m.gcLoop()
-	return m
+	return m, nil
 }
 
-// GetOrCreate returns the named session, spawning a new shell if it doesn't
-// exist yet (or has already closed).
+func writeTmuxConf() (string, error) {
+	f, err := os.CreateTemp("", "roost-tmux-*.conf")
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	if _, err := f.WriteString(roostTmuxConf); err != nil {
+		_ = os.Remove(f.Name())
+		return "", err
+	}
+	return f.Name(), nil
+}
+
+// tmuxSessionExists reports whether tmux already tracks the given session
+// (e.g. left over from a previous roost run).
+func (m *Manager) tmuxSessionExists(id string) bool {
+	return exec.Command("tmux", "-f", m.tmuxConfPath, "has-session", "-t", "="+id).Run() == nil
+}
+
+// killTmuxSession asks tmux to terminate a session. Idempotent.
+func (m *Manager) killTmuxSession(id string) {
+	_ = exec.Command("tmux", "-f", m.tmuxConfPath, "kill-session", "-t", "="+id).Run()
+}
+
+// GetOrCreate returns the named session, attaching to the tmux session of the
+// same name (creating it if it doesn't exist).
 func (m *Manager) GetOrCreate(id string) (*Session, error) {
 	if err := ValidateID(id); err != nil {
 		return nil, err
@@ -45,12 +106,11 @@ func (m *Manager) GetOrCreate(id string) (*Session, error) {
 	if s, ok := m.sessions[id]; ok && !s.IsClosed() {
 		return s, nil
 	}
-	if s, ok := m.sessions[id]; ok {
-		// closed — drop the stale entry before recreating
+	if _, ok := m.sessions[id]; ok {
+		// Stale closed entry — drop it (but keep the on-disk log).
 		delete(m.sessions, id)
-		_ = s.RemoveLog()
 	}
-	s, err := newSession(id, m.cfg)
+	s, err := newSession(id, m.cfg, m.tmuxConfPath, m.tmuxSessionExists(id))
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +254,8 @@ func (m *Manager) Rename(oldID, newID string) error {
 	return nil
 }
 
-// Delete closes a session and removes its log file.
+// Delete closes a session and removes its log file. Also kills the underlying
+// tmux session so the shell process actually terminates.
 func (m *Manager) Delete(id string) error {
 	if err := ValidateID(id); err != nil {
 		return err
@@ -205,6 +266,7 @@ func (m *Manager) Delete(id string) error {
 		delete(m.sessions, id)
 	}
 	m.mu.Unlock()
+	m.killTmuxSession(id)
 	if ok {
 		s.Close()
 		return s.RemoveLog()
@@ -217,7 +279,9 @@ func (m *Manager) Delete(id string) error {
 	return nil
 }
 
-// Shutdown closes all sessions. After Shutdown the manager is unusable.
+// Shutdown disconnects every active client and closes our PTY wrappers.
+// It deliberately leaves the underlying tmux sessions running — that is the
+// whole point of using tmux: shells survive roost restarts.
 func (m *Manager) Shutdown() {
 	close(m.stop)
 	m.mu.Lock()
@@ -226,6 +290,9 @@ func (m *Manager) Shutdown() {
 		s.Close()
 	}
 	m.sessions = nil
+	if m.tmuxConfPath != "" {
+		_ = os.Remove(m.tmuxConfPath)
+	}
 }
 
 func (m *Manager) gcLoop() {
