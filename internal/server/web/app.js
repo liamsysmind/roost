@@ -16,14 +16,24 @@
     return id;
   }
 
-  const sessionID = resolveSessionID();
-  document.title = `roost — ${sessionID.slice(0, 8)}`;
+  let sessionID = resolveSessionID();
+
+  // UUIDs show only the leading 8-char block; named sessions show full.
+  function displayID(id) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(id) ? id.slice(0, 8) : id;
+  }
+
+  function refreshSessionUI() {
+    document.title = `roost — ${displayID(sessionID)}`;
+    tag.textContent = displayID(sessionID);
+  }
 
   const tag = document.getElementById('session-tag');
-  tag.textContent = sessionID.slice(0, 8);
+  refreshSessionUI();
+
   tag.addEventListener('click', () => {
     const url = location.origin + '/s/' + encodeURIComponent(sessionID);
-    const restore = () => setTimeout(() => tag.textContent = sessionID.slice(0, 8), 800);
+    const restore = () => setTimeout(refreshSessionUI, 800);
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(url).then(
         () => { tag.textContent = 'copied!'; restore(); },
@@ -32,6 +42,37 @@
     } else {
       tag.textContent = url;
       restore();
+    }
+  });
+
+  // Rename — keeps the WebSocket alive because the server just re-keys
+  // the existing *Session struct, no reconnect required. We just need to
+  // update the browser's URL and our local sessionID.
+  function sanitizeName(s) {
+    return s.trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  }
+
+  const renameBtn = document.getElementById('session-rename');
+  renameBtn.addEventListener('click', async () => {
+    const raw = prompt(`Rename session\nCurrent: ${sessionID}\nNew:`, sessionID);
+    if (raw === null) return;
+    const to = sanitizeName(raw);
+    if (!to || to === sessionID) return;
+    try {
+      const r = await fetch(`/api/sessions/${encodeURIComponent(sessionID)}/rename`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'to=' + encodeURIComponent(to),
+      });
+      if (!r.ok) {
+        alert('rename failed: ' + (await r.text()).trim());
+        return;
+      }
+      sessionID = to;
+      refreshSessionUI();
+      history.replaceState(null, '', '/s/' + encodeURIComponent(to));
+    } catch (e) {
+      alert('rename failed: ' + e.message);
     }
   });
 
