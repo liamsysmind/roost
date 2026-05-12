@@ -2,8 +2,11 @@ package fs
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -152,34 +155,81 @@ func previewMime(name string) string {
 	return ""
 }
 
+// handleUpload accepts multipart/form-data with one "path" field and one or
+// more "file" fields. We parse the request *streaming* (mime/multipart
+// directly) rather than via r.ParseMultipartForm so large files never get
+// buffered through /tmp — each part is piped straight into its destination.
+// Cap is loose (100 GB per request) because the workload is single-user
+// self-hosted artifact moves; the OS still enforces disk-full.
+const uploadMaxBytes = 100 << 30 // 100 GB
+
 func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
-	// Max body size — 1 GB ought to be enough for most build artifacts. Adjust
-	// later if it bites.
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<30)
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		writeError(w, http.StatusBadRequest, err)
+	r.Body = http.MaxBytesReader(w, r.Body, uploadMaxBytes)
+
+	mediaType, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || !strings.HasPrefix(mediaType, "multipart/") {
+		writeError(w, http.StatusBadRequest, errors.New("expected multipart/form-data"))
 		return
 	}
-	dir := r.FormValue("path")
-	files := r.MultipartForm.File["file"]
-	if len(files) == 0 {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("no file uploaded"))
+	boundary := params["boundary"]
+	if boundary == "" {
+		writeError(w, http.StatusBadRequest, errors.New("missing multipart boundary"))
 		return
 	}
-	var saved []*Entry
-	for _, fh := range files {
-		f, err := fh.Open()
+
+	mr := multipart.NewReader(r.Body, boundary)
+	dir := ""
+	saved := []*Entry{}
+	for {
+		part, err := mr.NextPart()
+		if errors.Is(err, io.EOF) {
+			break
+		}
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		entry, err := h.API.Save(dir, filepath.Base(fh.Filename), f)
-		_ = f.Close()
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err)
-			return
+		name := part.FormName()
+		filename := part.FileName()
+
+		// "path" field — destination directory, relative to fs root.
+		// Read up to 8 KB (path strings are tiny in practice).
+		if name == "path" && filename == "" {
+			b, err := io.ReadAll(io.LimitReader(part, 8<<10))
+			_ = part.Close()
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			dir = string(b)
+			continue
 		}
-		saved = append(saved, entry)
+
+		// "file" field — stream straight to disk through h.API.Save,
+		// which writes to a temp sibling then renames atomically.
+		if name == "file" {
+			if filename == "" {
+				_ = part.Close()
+				continue
+			}
+			entry, err := h.API.Save(dir, filepath.Base(filename), part)
+			_ = part.Close()
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			saved = append(saved, entry)
+			continue
+		}
+
+		// Unknown field — drain it so we can continue.
+		_, _ = io.Copy(io.Discard, part)
+		_ = part.Close()
+	}
+
+	if len(saved) == 0 {
+		writeError(w, http.StatusBadRequest, errors.New("no file uploaded"))
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"saved": saved})
 }
