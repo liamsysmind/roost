@@ -38,9 +38,15 @@ session — all in one page, on every device you own.
 
 ```bash
 git clone https://github.com/liamsysmind/roost && cd roost
-make                       # builds ./roost
+make                       # fetches vendored JS deps (first run) + builds ./roost
 sudo make install          # installs /usr/local/bin/roost  (optional)
 ```
+
+`make` auto-runs `scripts/fetch-vendor.sh` the first time to populate
+`internal/server/web/vendor/` (xterm.js + addons, marked, highlight.js).
+Those files are `.gitignore`'d, so a fresh clone needs them fetched before
+the embedded web UI can render the terminal. Re-run `make vendor` after
+bumping any pinned version in the script.
 
 Or grab a binary for your target:
 
