@@ -61,7 +61,12 @@
       modelFull.textContent  = j.model || '—';
       ctxDetail.textContent  = `${fmtK(ctx)} / ${fmtK(win)} (${pct.toFixed(1)}%)`;
       ctxFill.style.width    = pct.toFixed(1) + '%';
-      costDetail.textContent = fmtUSD(j.usage && j.usage.cost_usd);
+      const longTurns = (j.usage && j.usage.long_context_turns) || 0;
+      const costLine = fmtUSD(j.usage && j.usage.cost_usd) + ' est.';
+      costDetail.textContent = longTurns > 0
+        ? `${costLine} · ${longTurns} long-ctx turn${longTurns === 1 ? '' : 's'}`
+        : costLine;
+      costDetail.title = 'Estimate — bills 5m/1h cache writes separately, applies 2× when a turn exceeds 200K context. Excludes priority/batch tier discounts.';
 
       const prompts = j.prompts || [];
       if (prompts.length === 0) {
