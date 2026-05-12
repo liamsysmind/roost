@@ -328,6 +328,16 @@ self-hosted on your own machine, accessed through any browser.
 
 ---
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the dev loop and code
+conventions, and [CLAUDE.md](CLAUDE.md) for the architecture overview.
+
+## Security
+
+Found a security issue? Please follow [SECURITY.md](SECURITY.md) — don't
+open a public issue.
+
 ## License
 
 [MIT](LICENSE).
