@@ -6,6 +6,7 @@
   <title>roost</title>
   <link rel="stylesheet" href="/vendor/xterm.css">
   <style>
+    :root { color-scheme: dark; }
     html, body { margin: 0; padding: 0; height: 100%; background: #000; color: #eee; overflow: hidden;
       font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
     #bar {
@@ -17,7 +18,7 @@
       z-index: 10;
     }
     #bar .left  { flex: 1; display: flex; gap: 0.5rem; align-items: center; }
-    #bar .right { display: flex; gap: 0.4rem; }
+    #bar .right { display: flex; gap: 0.4rem; align-items: center; }
     #bar .tag { font-family: ui-monospace, monospace; color: #6c8; cursor: pointer; }
     #bar .tag:hover { text-decoration: underline; }
     #bar a, #bar button {
@@ -26,7 +27,72 @@
       text-decoration: none;
     }
     #bar a:hover, #bar button:hover { color: #fff; border-color: #555; }
-    #term { position: absolute; top: 28px; left: 0; right: 0; bottom: 0; }
+
+    #stage { position: absolute; top: 28px; left: 0; right: 0; bottom: 0; display: flex; }
+    #term { flex: 1; min-width: 200px; background: #000; }
+    #drag-handle {
+      width: 4px; background: #161616; cursor: col-resize; flex: 0 0 4px;
+      transition: background 0.1s;
+    }
+    #drag-handle:hover, #drag-handle.dragging { background: #4caf80; }
+    #fs { width: 360px; min-width: 220px; max-width: 60%;
+      background: #0e0e0e; border-left: 1px solid #1a1a1a;
+      display: flex; flex-direction: column; overflow: hidden; flex: 0 0 360px; }
+
+    #fhead {
+      display: flex; align-items: center; gap: 0.4rem;
+      padding: 0.5rem 0.7rem; border-bottom: 1px solid #1c1c1c;
+      font-size: 0.72rem; color: #8aa; user-select: none;
+    }
+    #fhead .crumb {
+      flex: 1; font-family: ui-monospace, monospace; color: #5b8;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    #fhead .crumb span { cursor: pointer; }
+    #fhead .crumb span:hover { color: #7d9; text-decoration: underline; }
+    #fhead button {
+      background: transparent; color: #888; border: 1px solid #2a2a2a;
+      padding: 2px 6px; border-radius: 3px; font-size: 0.7rem; cursor: pointer;
+    }
+    #fhead button:hover { color: #fff; border-color: #555; }
+
+    #ftree { flex: 1; overflow-y: auto; padding: 0.3rem 0; font-size: 0.83rem; }
+    .node { display: flex; align-items: center; padding: 2px 0.4rem 2px 0; cursor: default;
+      gap: 0.25rem; line-height: 1.4; }
+    .node:hover { background: #181818; }
+    .node .chev { width: 14px; text-align: center; color: #555; cursor: pointer; user-select: none;
+      font-size: 0.6rem; }
+    .node .icon { width: 16px; text-align: center; color: #6a8; }
+    .node .name { flex: 1; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .node.file .name { color: #c9c9c9; }
+    .node.dir .name { color: #6b8; font-weight: 500; }
+    .node .actions { display: none; gap: 0.2rem; padding-right: 0.3rem; }
+    .node:hover .actions { display: flex; }
+    .node .act {
+      background: transparent; color: #777; border: 1px solid #2a2a2a;
+      padding: 1px 5px; border-radius: 3px; font-size: 0.65rem; cursor: pointer;
+    }
+    .node .act:hover { color: #fff; border-color: #555; }
+    .node .act.del:hover { color: #f88; border-color: #844; }
+
+    .children { display: none; }
+    .children.open { display: block; }
+    .indent-1 { padding-left: 16px; } .indent-2 { padding-left: 32px; }
+    .indent-3 { padding-left: 48px; } .indent-4 { padding-left: 64px; }
+    .indent-5 { padding-left: 80px; } .indent-6 { padding-left: 96px; }
+
+    #fdrop {
+      position: absolute; inset: 0; display: none;
+      align-items: center; justify-content: center;
+      background: rgba(76,175,128,0.18); border: 2px dashed #4caf80;
+      color: #cfe; font-weight: 600; pointer-events: none;
+      z-index: 5;
+    }
+    #fs.dragging-over #fdrop { display: flex; }
+
+    #fstatus { padding: 0.3rem 0.7rem; font-size: 0.7rem; color: #666;
+      border-top: 1px solid #1c1c1c; min-height: 1.2em; }
+    #fstatus.err { color: #f88; }
   </style>
 </head>
 <body>
@@ -42,10 +108,24 @@
       </form>
     </div>
   </div>
-  <div id="term"></div>
+  <div id="stage">
+    <div id="term"></div>
+    <div id="drag-handle"></div>
+    <div id="fs">
+      <div id="fhead">
+        <div class="crumb" id="fcrumb">/</div>
+        <button id="fmkdir" title="new folder">+ dir</button>
+        <button id="frefresh" title="refresh">↻</button>
+      </div>
+      <div id="ftree"></div>
+      <div id="fstatus">drag files here to upload</div>
+      <div id="fdrop">drop to upload</div>
+    </div>
+  </div>
   <script src="/vendor/xterm.js"></script>
   <script src="/vendor/addon-fit.js"></script>
   <script src="/vendor/addon-webgl.js"></script>
   <script src="/app.js"></script>
+  <script src="/fs.js"></script>
 </body>
 </html>

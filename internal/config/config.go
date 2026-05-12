@@ -15,6 +15,15 @@ type Config struct {
 	Auth    Auth    `toml:"auth"`
 	Server  Server  `toml:"server"`
 	Session Session `toml:"session"`
+	FS      FS      `toml:"fs"`
+}
+
+// FS configures the filesystem API surface.
+//
+//   - Root: the directory the file panel browses. All API calls are
+//     constrained to this subtree. Defaults to the user's home.
+type FS struct {
+	Root string `toml:"root"`
 }
 
 type Auth struct {
@@ -106,6 +115,12 @@ func Load(path string) (*Config, error) {
 	}
 	if c.Server.Addr == "" {
 		c.Server.Addr = "127.0.0.1:8080"
+	}
+	if c.FS.Root == "" {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			c.FS.Root = home
+		}
 	}
 	return &c, nil
 }

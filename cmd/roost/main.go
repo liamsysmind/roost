@@ -16,6 +16,7 @@ import (
 
 	"github.com/liamsysmind/roost/internal/auth"
 	"github.com/liamsysmind/roost/internal/config"
+	rfs "github.com/liamsysmind/roost/internal/fs"
 	"github.com/liamsysmind/roost/internal/server"
 	"github.com/liamsysmind/roost/internal/session"
 )
@@ -87,7 +88,12 @@ func runServe(args []string) {
 	}
 	defer sm.Shutdown()
 
-	log.Fatal(server.New(am, sm, cfg.Server.Addr).Run())
+	fsAPI, err := rfs.New(cfg.FS.Root)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Fatal(server.New(am, sm, fsAPI, cfg.Server.Addr).Run())
 }
 
 func runSetup(args []string) {

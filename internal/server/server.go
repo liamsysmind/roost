@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/liamsysmind/roost/internal/auth"
+	rfs "github.com/liamsysmind/roost/internal/fs"
 	"github.com/liamsysmind/roost/internal/session"
 )
 
@@ -19,14 +20,15 @@ var webFS embed.FS
 type Server struct {
 	Auth     *auth.Manager
 	Sessions *session.Manager
+	FS       *rfs.API
 	Addr     string
 	handler  http.Handler
 	static   fs.FS
 }
 
-func New(a *auth.Manager, sm *session.Manager, addr string) *Server {
+func New(a *auth.Manager, sm *session.Manager, fsAPI *rfs.API, addr string) *Server {
 	static, _ := fs.Sub(webFS, "web")
-	s := &Server{Auth: a, Sessions: sm, Addr: addr, static: static}
+	s := &Server{Auth: a, Sessions: sm, FS: fsAPI, Addr: addr, static: static}
 	s.setupRoutes()
 	return s
 }
@@ -39,6 +41,7 @@ func (s *Server) setupRoutes() {
 	mux.HandleFunc("GET /vendor/", s.handleStatic)
 	mux.HandleFunc("GET /app.js", s.handleStatic)
 	mux.HandleFunc("GET /home.js", s.handleStatic)
+	mux.HandleFunc("GET /fs.js", s.handleStatic)
 
 	wsh := &session.Handler{Manager: s.Sessions}
 	mux.HandleFunc("GET /ws/terminal", wsh.Serve)
@@ -47,6 +50,8 @@ func (s *Server) setupRoutes() {
 	mux.HandleFunc("GET /api/sessions", s.handleSessionsList)
 	mux.HandleFunc("POST /api/sessions/{id}/rename", s.handleSessionRename)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleSessionDelete)
+
+	(&rfs.Handler{API: s.FS}).Mount(mux)
 
 	mux.HandleFunc("GET /", s.handleHome)
 	mux.HandleFunc("GET /s/{id}", s.handleIndex)
