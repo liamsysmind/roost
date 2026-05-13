@@ -104,6 +104,8 @@ shell. Each session is a separate URL like `/s/zephyr-build`, so:
 - two tabs on the same URL get the **same** live view — useful for
   showing the screen to a colleague over a screenshare
 
+![Sessions home page](docs/img/sessions.png)
+
 ### Terminal
 
 A full xterm.js terminal with WebGL rendering and unlimited scrollback
@@ -138,14 +140,28 @@ Right side of the page. Two tabs:
   - Click a file row or the ↓ icon to download. Progress bar on big files.
   - Uploads stream straight to disk — no `/tmp` buffering, no memory
     blow-up, no 1 GB cap.
-- **AI** — live view of the Claude Code session running in the
-  terminal's current directory.
-  - Model name, context tokens used / window estimate, message count,
-    and token breakdown.
-  - List of every prompt you've sent; click one to scroll the terminal
-    scrollback back to that point.
-  - Auto-refreshes; clears when you `cd` to a directory without a
-    Claude project.
+- **Activity** — clickable history of what happened in this pane. Each
+  item is an anchor — click to scroll the terminal back to where it
+  ran, with the matched row briefly highlighted.
+  - **AI prompts** come from the active session log: Claude Code
+    (`~/.claude/projects/{slug}/*.jsonl`) and Codex
+    (`~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`) are both
+    supported. They only appear when roost detects that `claude` or
+    `codex` is actually running in the pane's process tree, so a fresh
+    bash shell in the same directory doesn't surface stale prompts
+    from a session you exited an hour ago.
+  - **Shell commands** are scanned out of the visible terminal
+    scrollback by matching the typical `user@host:path$ command`
+    prompt pattern. They show whenever the pane is in a shell.
+  - When the pane is running a TUI app (vim, less, htop, …) the click
+    handler disables itself — the buffer state isn't stable enough to
+    land cleanly.
+  - Top-bar chips show the active AI session's model and most-recent
+    context-token count; click either to open the panel directly.
+
+![Activity panel — AI prompts](docs/img/activity-prompts.png)
+
+![Activity panel — shell commands](docs/img/activity-shell.png)
 
 ### Notifications
 
