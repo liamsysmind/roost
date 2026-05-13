@@ -3,24 +3,41 @@
 **A self-hosted browser workspace for terminal-first AI coding.**
 
 Install one binary on your dev box. SSH-tunnel it. Open a browser. You get a
-real terminal, a file tree, and a panel that watches your Claude Code
-session — all in one page, on every device you own.
+real terminal, a file tree, and a panel that watches your Claude Code or
+Codex session — all in one page, on every device you own.
+
+![Sessions home page](docs/img/sessions.png)
 
 - **Terminal that survives disconnects.** Backed by `tmux` under the hood,
   so closing your laptop, switching networks, or restarting the server
   doesn't kill your running build or your in-flight agent.
 - **File tree next to the terminal.** Click to preview. Drag-drop or
   Ctrl+V from your OS to upload. Click a file to download.
-- **AI session at a glance.** Live model name, context-window usage, and
+- **Activity panel at a glance.** Live model name, latest context size,
   every prompt you've sent — click one to scroll the terminal back to it.
+  Works with Claude Code and Codex.
 - **Multi-session, multi-tab.** Each browser tab is its own named shell.
   Open two tabs on the same session to share the same screen with yourself.
 - **No cloud. No subscription. No account.** One process, one user,
   one binary.
 
 > Status: pre-1.0, single-user, designed for SSH-tunnel deployment.
-> Pricing/cost tracking is deliberately not built in — API rates shift and
-> subscription plans bill differently; only token counts are surfaced.
+> Token counts are surfaced; dollar amounts deliberately aren't (API rates
+> shift, subscription plans bill differently — pair the numbers with your
+> own price sheet).
+
+---
+
+## Contents
+
+- [Quick start](#quick-start)
+- [What you get](#what-you-get)
+- [Configuration](#configuration)
+- [Running as a service](#running-as-a-service)
+- [Multi-user on one machine](#multi-user-on-one-machine)
+- [Public access](#public-access)
+- [Why this exists](#why-this-exists)
+- [What roost isn't](#what-roost-isnt)
 
 ---
 
@@ -48,12 +65,6 @@ Those files are `.gitignore`'d, so a fresh clone needs them fetched before
 the embedded web UI can render the terminal. Re-run `make vendor` after
 bumping any pinned version in the script.
 
-Or grab a binary for your target:
-
-```bash
-make cross                 # writes dist/roost-<version>-<os>-<arch>
-```
-
 ### One-time setup
 
 ```bash
@@ -69,7 +80,7 @@ echo 'your-password' | roost setup --password-stdin
 
 `setup` picks a free port automatically (default 8080, falls back to 8081…
 if taken) and writes the chosen address into the config along with a
-bcrypt password hash, a session secret, and a hook secret.
+bcrypt password hash and a hook secret.
 
 ### Run
 
@@ -104,17 +115,24 @@ shell. Each session is a separate URL like `/s/zephyr-build`, so:
 - two tabs on the same URL get the **same** live view — useful for
   showing the screen to a colleague over a screenshare
 
-![Sessions home page](docs/img/sessions.png)
-
 ### Terminal
 
-A full xterm.js terminal with WebGL rendering and unlimited scrollback
-(persisted to a log file on disk, so reattaching after a server restart
-still shows the conversation you had this morning).
+A full xterm.js terminal with WebGL rendering, a 100K-line in-browser
+scrollback buffer, and an effectively unbounded on-disk session log
+that's replayed when you reattach — closing your laptop and coming back
+the next morning still shows the conversation.
 
-Keyboard ergonomics that match the OS:
+Scrollback navigation that works the way you'd expect:
 
-- `Ctrl+C` copies selected text, or sends `SIGINT` if nothing is selected
+- **Mouse wheel** scrolls the buffer, even while a TUI-style agent
+  (Claude Code, Codex) is running. Hold **Shift** while wheeling to
+  forward to the app instead (for `less`-style use).
+- **Shift+PageUp / Shift+PageDown / Shift+Home / Shift+End** for
+  keyboard navigation.
+
+Copy / paste:
+
+- `Ctrl+C` copies the selection — or sends `SIGINT` if nothing is selected
 - `Ctrl+Shift+C` always copies
 - `Ctrl+Shift+V` pastes from clipboard into the shell
 
@@ -123,41 +141,30 @@ Keyboard ergonomics that match the OS:
 Right side of the page. Two tabs:
 
 - **Files** — browse, preview, upload, download, rename, delete.
-  - Click a file to **preview** it inline. Content type is auto-detected
-    from MIME (with fallback byte-sniffing for extensionless files):
-    - **Markdown** (`.md`, `.markdown`, …) → rendered HTML with
-      tables, blockquotes, links, images
-    - **Source code** (Go, Python, Rust, C/C++, Java, JS/TS, shell,
-      JSON/YAML/TOML, HTML/CSS, SQL, Dockerfile, Makefile, and 20+
-      more) → syntax highlighting (GitHub Dark theme)
-    - **Images / video / audio / PDF** → native browser rendering
-    - **Plain text / unknown** → monospace block
-    - **Binary** → "use download to save" hint
-  - The tree follows the terminal's `cd` automatically.
-  - **Drag-drop** anywhere on the page or **Ctrl+V** from your OS to
-    upload. Status line shows the destination path so there's no
-    "where did my file go".
-  - Click a file row or the ↓ icon to download. Progress bar on big files.
-  - Uploads stream straight to disk — no `/tmp` buffering, no memory
-    blow-up, no 1 GB cap.
+  Click a file for inline preview: markdown renders to HTML with code
+  highlighting, source files get syntax highlighting (Go, Python, Rust,
+  JS/TS, shell, YAML/TOML, etc.), images / video / audio / PDF render
+  natively, anything else falls back to a plain-text block. The tree
+  follows the terminal's `cd` automatically. Drag-drop anywhere on the
+  page or **Ctrl+V** from your OS to upload — uploads stream straight
+  to disk with no `/tmp` buffering and no upload-size cap.
+
 - **Activity** — clickable history of what happened in this pane. Each
   item is an anchor — click to scroll the terminal back to where it
   ran, with the matched row briefly highlighted.
-  - **AI prompts** come from the active session log: Claude Code
-    (`~/.claude/projects/{slug}/*.jsonl`) and Codex
-    (`~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`) are both
-    supported. They only appear when roost detects that `claude` or
-    `codex` is actually running in the pane's process tree, so a fresh
-    bash shell in the same directory doesn't surface stale prompts
-    from a session you exited an hour ago.
-  - **Shell commands** are scanned out of the visible terminal
-    scrollback by matching the typical `user@host:path$ command`
-    prompt pattern. They show whenever the pane is in a shell.
-  - When the pane is running a TUI app (vim, less, htop, …) the click
-    handler disables itself — the buffer state isn't stable enough to
-    land cleanly.
-  - Top-bar chips show the active AI session's model and most-recent
-    context-token count; click either to open the panel directly.
+
+  Two sources of anchors:
+  - **AI prompts** from Claude Code and Codex, pulled from each tool's
+    on-disk session log. Only shown when roost detects that the agent
+    is actually running in this pane (not just when a stale JSONL
+    happens to share the cwd).
+  - **Shell commands** scanned out of the terminal scrollback by
+    matching the typical `user@host:path$ command` prompt pattern.
+
+  Top-bar chips show the current AI session's model and latest
+  context-token count; click either to open the panel directly. Anchor
+  clicks pause themselves while a TUI app (vim, less, htop, …) owns
+  the buffer.
 
 ![Activity panel — AI prompts](docs/img/activity-prompts.png)
 
@@ -173,8 +180,10 @@ roost hook-info
 
 …prints a ready-to-paste snippet for `~/.claude/settings.json`. Once
 configured, Claude Code's `Stop` hook fires a notification to your
-browser whenever an agent stops waiting for input — your laptop pings,
-even if you're in a different tab.
+browser whenever an agent stops waiting for input — your laptop pings
+even when the roost tab is backgrounded. Chrome, Edge, and Firefox
+all surface it as a normal OS notification after one prompt to grant
+the permission.
 
 ---
 
@@ -202,30 +211,6 @@ idle_ttl  = "24h"             # GC sessions with no clients after this idle.
 root = ""                     # default: your home directory.
                               #   /api/fs/* operations are contained here.
 ```
-
----
-
-## Multi-user on one machine
-
-`roost` is deliberately single-user per instance. If two people share a
-host, they each run their own `roost` on a different port — UNIX UIDs
-do the isolation, the binary stays simple.
-
-```
-[ shared linux host ]
-
-  alice (UID 1001)                         bob (UID 1002)
-   ~/.config/roost/config.toml              ~/.config/roost/config.toml
-   ~/.local/share/roost/sessions/           ~/.local/share/roost/sessions/
-   roost serve --addr 127.0.0.1:8081        roost serve --addr 127.0.0.1:8082
-
-   from her laptop:                         from his laptop:
-   ssh -L 8081:localhost:8081 alice@host    ssh -L 8082:localhost:8082 bob@host
-   open http://localhost:8081               open http://localhost:8082
-```
-
-Each `roost` runs as its own user, sees only its own home / `tmux` /
-`~/.claude/`. No state crosses between them.
 
 ---
 
@@ -297,86 +282,36 @@ launchctl load ~/Library/LaunchAgents/com.liamsysmind.roost.plist
 
 ---
 
-## Public access via Cloudflare Tunnel
+## Multi-user on one machine
 
-If you don't want to SSH-tunnel every time (especially from phones or
-collaborators' machines), front `roost` with a [Cloudflare Tunnel] and
-[Cloudflare Access]. You get a public HTTPS URL with zero open ports
-on your machine, TLS terminated at the edge, and email/SSO auth in
-front of the password.
+`roost` is deliberately single-user per instance. If two people share a
+host, they each run their own `roost` on a different port — UNIX UIDs
+do the isolation, the binary stays simple.
 
 ```
-[ your phone / laptop / anywhere ]
-            ↓
-   https://roost.example.com   (Cloudflare Edge: TLS + Access SSO)
-            ↓
-       Cloudflare Tunnel       (outbound from your host)
-            ↓
-         cloudflared           (running alongside roost)
-            ↓
-       http://127.0.0.1:8080   (roost — never exposed to a public port)
+[ shared linux host ]
+
+  alice (UID 1001)                         bob (UID 1002)
+   ~/.config/roost/config.toml              ~/.config/roost/config.toml
+   ~/.local/share/roost/sessions/           ~/.local/share/roost/sessions/
+   roost serve --addr 127.0.0.1:8081        roost serve --addr 127.0.0.1:8082
+
+   from her laptop:                         from his laptop:
+   ssh -L 8081:localhost:8081 alice@host    ssh -L 8082:localhost:8082 bob@host
+   open http://localhost:8081               open http://localhost:8082
 ```
 
-### Setup
-
-1. **Keep `roost` on loopback** — no config change needed:
-
-   ```toml
-   [server]
-   addr = "127.0.0.1:8080"
-   ```
-
-2. **Add a Public Hostname to your existing tunnel** (Cloudflare Zero
-   Trust → Networks → Tunnels → \[your tunnel\] → Public Hostname → Add):
-
-   | Field    | Value                          |
-   |----------|--------------------------------|
-   | Subdomain | `roost` (or whatever)         |
-   | Domain    | your domain                   |
-   | Service   | Type `HTTP`, URL `localhost:8080` |
-   | Additional → TLS | check **No TLS Verify** |
-
-3. **Put Cloudflare Access in front** (strongly recommended — without
-   it, anyone on the internet who finds your hostname is exposed to
-   `roost`'s single password). Zero Trust → Access → Applications →
-   Add → Self-hosted:
-
-   - Application: `roost`
-   - Domain: `roost.example.com`
-   - Policy: Allow, with rule **Emails → include → your address**
-
-   First page load now requires an email OTP or your SSO. roost's
-   password becomes a second factor behind that.
-
-### Compatibility notes
-
-| Feature | Through CF Tunnel |
-|---------|--------------------|
-| Terminal WebSocket / SSE notifications | ✅ tunnels support WS natively |
-| HTTPS                              | ✅ Cloudflare provides the cert |
-| `Stop`-hook POST to `/api/notify`  | ✅ Hooks hit `127.0.0.1:8080` locally, never via the tunnel |
-| Drag-drop / Ctrl+V upload          | ⚠️ Cloudflare's request body limit is **100 MB on Free, 200 MB on Pro, 500 MB on Business**. For larger transfers, fall back to SSH tunnel (`ssh -L 8080:localhost:8080`) which has no such limit. |
-| Streaming download of multi-GB files | ✅ usually fine; falls back to a direct `<a download>` link past 2 GB |
-
-[Cloudflare Tunnel]: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/
-[Cloudflare Access]: https://developers.cloudflare.com/cloudflare-one/applications/
+Each `roost` runs as its own user, sees only its own home / `tmux` /
+`~/.claude/`. No state crosses between them.
 
 ---
 
-## What roost isn't
+## Public access
 
-- **Not multi-tenant — and never will be.** Two people = two instances.
-  Multi-user accounting belongs in a deployment-layer hub, not in this
-  codebase.
-- **Not exposed to the internet by default.** Loopback only. Reach it
-  via SSH tunnel, Tailscale, ZeroTier, WireGuard — your call.
-- **Not an editor.** The file tree is for moving artifacts in and out.
-  Edit files with whatever editor you run inside the terminal.
-- **Not a Claude Code clone.** It surfaces what Claude Code already
-  records on disk; it doesn't run the agent itself.
-- **No usage cost in dollars.** API prices shift, subscription plans
-  bill differently. Token counts are shown — interpret them with your
-  own price sheet.
+For browsers that can't SSH-tunnel (phones, friends' machines), front
+roost with a Cloudflare Tunnel + Access — public HTTPS URL, no open
+ports on your host, SSO in front of the password. Full setup in
+[docs/cloudflare.md](docs/cloudflare.md).
 
 ---
 
@@ -394,6 +329,33 @@ Existing tools didn't fit:
 
 `roost` is the missing intersection: terminal + file tree + AI panel,
 self-hosted on your own machine, accessed through any browser.
+
+---
+
+## What roost isn't
+
+- **Not multi-tenant — and never will be.** Two people = two instances.
+  Multi-user accounting belongs in a deployment-layer hub, not in this
+  codebase.
+- **Not exposed to the internet by default.** Loopback only. Reach it
+  via SSH tunnel, Tailscale, ZeroTier, WireGuard — your call.
+- **Not an editor.** The file tree is for moving artifacts in and out.
+  Edit files with whatever editor you run inside the terminal.
+- **Not a Claude Code clone.** It surfaces what Claude Code (or Codex)
+  already records on disk; it doesn't run the agent itself.
+- **No usage cost in dollars.** API prices shift, subscription plans
+  bill differently. Token counts are shown — interpret them with your
+  own price sheet.
+
+---
+
+## Building binaries for other hosts
+
+```bash
+make cross                 # writes dist/roost-<version>-<os>-<arch>
+```
+
+Cross-compiles to linux/amd64, linux/arm64, darwin/amd64, darwin/arm64.
 
 ---
 
