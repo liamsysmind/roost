@@ -81,7 +81,7 @@
 
   const term = new Terminal({
     cursorBlink: true,
-    fontFamily: 'ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace',
+    fontFamily: 'ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans Mono CJK SC", "Noto Sans CJK SC", "WenQuanYi Micro Hei Mono", monospace',
     fontSize: 14,
     scrollback: 100000,
     theme: { background: '#000000', foreground: '#e6e6e6' },
@@ -93,11 +93,11 @@
   term.open(document.getElementById('term'));
   window.roostTerm = term;
 
-  try {
-    term.loadAddon(new WebglAddon.WebglAddon());
-  } catch (e) {
-    console.warn('WebGL renderer unavailable, using DOM:', e);
-  }
+  // WebGL renderer is intentionally disabled. It pre-rasterizes glyphs from a
+  // single resolved font into a GPU atlas and cannot fall back per-character,
+  // so any CJK / emoji char absent from the primary monospace font renders as
+  // the atlas's missing-glyph placeholder (a row of dashes). The DOM renderer
+  // uses native browser font fallback, honouring the full fontFamily stack.
 
   // Search addon — exposed on window so the AI panel can jump to prompts.
   try {

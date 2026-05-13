@@ -78,9 +78,12 @@ func newSession(id string, cfg Config, tmuxConfPath string, tmuxAlreadyExists bo
 	}
 
 	// Spawn tmux. -A on new-session means "attach if exists, create otherwise".
+	// -u forces UTF-8 mode regardless of locale detection, so multibyte input
+	// survives even when LANG/LC_CTYPE is unset (e.g. launchd-spawned daemon).
 	// We pass the shell explicitly so a brand-new tmux session uses our chosen
 	// login shell instead of whatever tmux's default-shell points at.
 	cmd := exec.Command("tmux",
+		"-u",
 		"-f", tmuxConfPath,
 		"new-session", "-A",
 		"-s", id,
@@ -89,11 +92,19 @@ func newSession(id string, cfg Config, tmuxConfPath string, tmuxAlreadyExists bo
 		"--", shell, "-l",
 	)
 	// Strip TMUX from the environment so tmux doesn't refuse to start nested
-	// or print a "sessions should be nested" warning.
-	env := make([]string, 0, len(os.Environ())+3)
+	// or print a "sessions should be nested" warning. Also ensure the child
+	// shell has a UTF-8 locale: when roost is launched by launchd / systemd
+	// neither LANG nor LC_* is inherited, leaving readline in POSIX mode where
+	// it mangles every byte ≥0x80 — so CJK input round-trips back as garbage.
+	hasUTF8Locale := false
+	env := make([]string, 0, len(os.Environ())+4)
 	for _, e := range os.Environ() {
 		if strings.HasPrefix(e, "TMUX=") || strings.HasPrefix(e, "TMUX_PANE=") {
 			continue
+		}
+		if (strings.HasPrefix(e, "LANG=") || strings.HasPrefix(e, "LC_ALL=") || strings.HasPrefix(e, "LC_CTYPE=")) &&
+			strings.Contains(strings.ToLower(e), "utf") {
+			hasUTF8Locale = true
 		}
 		env = append(env, e)
 	}
@@ -102,6 +113,9 @@ func newSession(id string, cfg Config, tmuxConfPath string, tmuxAlreadyExists bo
 		"ROOST=1",
 		"ROOST_SESSION="+id,
 	)
+	if !hasUTF8Locale {
+		env = append(env, "LANG=en_US.UTF-8")
+	}
 	cmd.Env = env
 
 	tty, err := pty.Start(cmd)
