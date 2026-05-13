@@ -310,6 +310,43 @@
     return 'binary';
   }
 
+  // Resolve an `src` from a markdown file (located at `mdPath`, relative to
+  // the fs root) into an absolute fs-root-relative path. Returns null for
+  // external URLs (http://…, data:, mailto:, etc.), which the caller should
+  // leave alone. Handles "/abs", "rel/file", "./rel", and "../parent" forms,
+  // and collapses .. segments lexically.
+  function resolveMarkdownRelative(mdPath, src) {
+    if (!src) return null;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith('//') || src.startsWith('#')) {
+      return null;
+    }
+    let rel;
+    if (src.startsWith('/')) {
+      rel = src.replace(/^\/+/, '');
+    } else {
+      const baseDir = mdPath.includes('/')
+        ? mdPath.substring(0, mdPath.lastIndexOf('/'))
+        : '';
+      rel = baseDir ? baseDir + '/' + src : src;
+    }
+    const parts = [];
+    for (const seg of rel.split('/')) {
+      if (seg === '' || seg === '.') continue;
+      if (seg === '..') { if (parts.length) parts.pop(); continue; }
+      parts.push(seg);
+    }
+    return parts.join('/');
+  }
+
+  function rewriteMarkdownAssets(root, mdPath) {
+    root.querySelectorAll('img').forEach((img) => {
+      const src = img.getAttribute('src');
+      const rel = resolveMarkdownRelative(mdPath, src);
+      if (rel === null) return;
+      img.src = '/api/fs/preview?path=' + encodeURIComponent(rel);
+    });
+  }
+
   async function openPreview(path) {
     const name = path.split('/').pop();
     pvTitleEl.textContent = path;
@@ -368,6 +405,11 @@
           pvBodyEl.innerHTML = '<div class="prose"></div>';
           const proseEl = pvBodyEl.querySelector('.prose');
           proseEl.innerHTML = window.marked.parse(txt);
+          // Rewrite relative <img src=…> so embedded screenshots load
+          // through the fs API instead of resolving against the current
+          // page URL. Markdown that references "docs/img/foo.png" expects
+          // the link to be relative to the .md file, not to /s/{id}/.
+          rewriteMarkdownAssets(proseEl, path);
           // Highlight every fenced code block inside the rendered HTML.
           if (window.hljs) {
             proseEl.querySelectorAll('pre code').forEach((b) => {
