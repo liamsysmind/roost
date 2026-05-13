@@ -1,9 +1,13 @@
 # Build artifacts
 /bin/
 /dist/
+/roost
 *.exe
 *.test
 *.out
+
+# Third-party CLI state dropped in the repo
+/.codex/
 
 # Go
 vendor/
