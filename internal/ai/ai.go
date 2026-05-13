@@ -241,9 +241,8 @@ type ActiveSession struct {
 	Modified         time.Time     `json:"modified"`
 	Model            string        `json:"model"`
 	Usage            Usage         `json:"usage"`
-	ContextTokens    int64         `json:"context_tokens"`     // input + cache_read + cache_creation on the latest assistant turn
-	ContextWindowEst int64         `json:"context_window_est"` // 200K default, bumped to 1M when overflowed
-	Prompts          []PromptEntry `json:"prompts"`
+	ContextTokens int64         `json:"context_tokens"` // input + cache_read + cache_creation on the latest assistant turn
+	Prompts       []PromptEntry `json:"prompts"`
 }
 
 // PromptEntry summarises one user message.
@@ -369,11 +368,10 @@ func (r *Reader) readActive(slug, file string, mtime time.Time) (*ActiveSession,
 	defer f.Close()
 
 	out := &ActiveSession{
-		Project:          slugToProject(slug),
-		Slug:             slug,
-		File:             file,
-		Modified:         mtime,
-		ContextWindowEst: 200_000,
+		Project:  slugToProject(slug),
+		Slug:     slug,
+		File:     file,
+		Modified: mtime,
 	}
 
 	sc := bufio.NewScanner(f)
@@ -419,7 +417,7 @@ func (r *Reader) readActive(slug, file string, mtime time.Time) (*ActiveSession,
 				continue
 			}
 			content := extractContentText(m.Content)
-			if content == "" {
+			if content == "" || isMetaUserMessage(content) {
 				continue
 			}
 			preview := content
@@ -433,9 +431,6 @@ func (r *Reader) readActive(slug, file string, mtime time.Time) (*ActiveSession,
 			})
 		}
 	}
-	if out.ContextTokens > out.ContextWindowEst {
-		out.ContextWindowEst = 1_000_000
-	}
 	sort.SliceStable(out.Prompts, func(i, j int) bool {
 		return out.Prompts[i].Timestamp > out.Prompts[j].Timestamp
 	})
@@ -443,6 +438,26 @@ func (r *Reader) readActive(slug, file string, mtime time.Time) (*ActiveSession,
 		out.Prompts = out.Prompts[:40]
 	}
 	return out, sc.Err()
+}
+
+// isMetaUserMessage reports whether a "user" JSONL entry's content is actually
+// Claude Code's local-command machinery (slash-command stdin/stdout, exit
+// caveat, etc.) rather than a real user-typed prompt. These show up in the
+// JSONL with type=user but should never be presented as prompts.
+func isMetaUserMessage(content string) bool {
+	trimmed := strings.TrimLeft(content, " \t\r\n")
+	if trimmed == "" {
+		return false
+	}
+	if strings.HasPrefix(trimmed, "<local-command-") {
+		return true
+	}
+	if strings.HasPrefix(trimmed, "<command-name>") ||
+		strings.HasPrefix(trimmed, "<command-message>") ||
+		strings.HasPrefix(trimmed, "<command-args>") {
+		return true
+	}
+	return false
 }
 
 func extractContentText(raw json.RawMessage) string {

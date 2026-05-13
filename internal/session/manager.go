@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,8 +32,44 @@ type Manager struct {
 //   - unbind-key -a       : drops every default key binding (including C-b),
 //                           so the prefix can never be hit by accident. Keys
 //                           flow straight to the shell.
-//   - history-limit 0     : tmux scrollback off — roost's own log file is the
-//                           authoritative history and is replayed on attach.
+//   - history-limit 50000 : tmux's own per-pane scrollback. We rely on tmux
+//                           feeding scrolled-off lines to xterm.js incrementally,
+//                           but a non-trivial history-limit is also needed so
+//                           that tmux's pane has somewhere to put text before
+//                           it's relayed (and so `capture-pane` works for tools
+//                           that want pane state).
+//   - terminal-overrides smcup@/rmcup@ : strip the alt-screen capabilities so
+//                           tmux never sends CSI ?1049h to xterm.js. Without
+//                           this, tmux enters the alt buffer on attach, which
+//                           has zero scrollback per terminal protocol — wheel
+//                           and keyboard scrolling do nothing, AND xterm.js's
+//                           fallback converts wheel events into arrow-key
+//                           keystrokes (bash receives ↑/↓ and cycles through
+//                           command history instead of scrolling).
+//
+//                           Apps inside tmux that use alt-screen (vim, less,
+//                           man) still work as expected: tmux's pane enters
+//                           alt-screen internally and renders the app to the
+//                           client as normal output. On exit, tmux redraws the
+//                           pre-app pane state — so the screen "restores" the
+//                           way users expect, AND the app's content lands in
+//                           xterm.js's scrollback for later review. Best of
+//                           both worlds because tmux acts as a translator.
+//
+//                           `set -g alternate-screen off` alone is not
+//                           sufficient — tmux still emits the alt-screen toggle
+//                           without smcup/rmcup overridden.
+//   - terminal-overrides indn@/rin@   : strip the parametrised index/reverse-
+//                           index capabilities. tmux uses CSI Pn S (Scroll Up
+//                           N) and CSI Pn T (Scroll Down N) as a batched-scroll
+//                           optimization instead of N individual line feeds.
+//                           xterm.js implements those per spec — the scrolled
+//                           lines are DROPPED, not pushed into scrollback. So
+//                           a bash command that overflows the pane would have
+//                           its earlier output appear briefly and then vanish
+//                           with no way to scroll back. Removing indn/rin
+//                           forces tmux to emit individual line feeds, each of
+//                           which properly accumulates in xterm.js scrollback.
 //   - escape-time 0       : avoids the 500ms delay after ESC that breaks vim/AI
 //                           agents.
 //   - default-terminal    : matches what most modern terminals advertise.
@@ -41,7 +78,8 @@ type Manager struct {
 const roostTmuxConf = `
 set-option -g status off
 unbind-key -a
-set-option -g history-limit 0
+set-option -g history-limit 50000
+set-option -ga terminal-overrides ',*:smcup@:rmcup@:indn@:rin@'
 set-option -sg escape-time 0
 set-option -g default-terminal "tmux-256color"
 set-option -g destroy-unattached off
@@ -61,6 +99,13 @@ func NewManager(cfg Config) (*Manager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("write tmux conf: %w", err)
 	}
+	// If a tmux server is already running on the default socket (left over from
+	// a previous roost lifetime, or shared with the user's own tmux), source
+	// our conf into it so the new option values take effect immediately.
+	// Without this, an upgrade that changes terminal-overrides etc. would only
+	// affect freshly-spawned tmux servers — existing sessions would keep using
+	// the obsolete settings for the rest of their lifetime.
+	_ = exec.Command("tmux", "source-file", confPath).Run()
 	m := &Manager{
 		cfg:          cfg,
 		tmuxConfPath: confPath,
@@ -95,22 +140,141 @@ func (m *Manager) killTmuxSession(id string) {
 	_ = exec.Command("tmux", "-f", m.tmuxConfPath, "kill-session", "-t", "="+id).Run()
 }
 
-// Cwd asks tmux for the active pane's current working directory.
-// Works without shell integration: tmux derives cwd from the foreground
-// process's /proc/<pid>/cwd. We avoid the "=" exact-match prefix because
-// display-message returns empty for it (unlike has-session / kill-session).
-func (m *Manager) Cwd(id string) (string, error) {
-	if err := ValidateID(id); err != nil {
-		return "", err
+// PaneInfo asks tmux for the active pane's cwd, foreground command name, and
+// the AI agent currently running anywhere in the pane's process tree (Claude
+// Code / Codex, or "" for plain shell). Works without shell integration: tmux
+// derives cwd and the foreground command from the foreground process's
+// /proc/<pid>; agent detection walks ps output from the pane's shell PID. We
+// avoid the "=" exact-match prefix because display-message returns empty for
+// it (unlike has-session / kill-session).
+func (m *Manager) PaneInfo(id string) (cwd, cmd, app string, err error) {
+	if e := ValidateID(id); e != nil {
+		return "", "", "", e
 	}
-	out, err := exec.Command("tmux",
+	out, e := exec.Command("tmux",
 		"-f", m.tmuxConfPath,
 		"display-message", "-t", id,
-		"-p", "#{pane_current_path}").Output()
-	if err != nil {
-		return "", err
+		"-p", "#{pane_current_path}\x1f#{pane_current_command}\x1f#{pane_pid}").Output()
+	if e != nil {
+		return "", "", "", e
 	}
-	return strings.TrimSpace(string(out)), nil
+	parts := strings.SplitN(strings.TrimRight(string(out), "\n"), "\x1f", 3)
+	cwd = parts[0]
+	if len(parts) >= 2 {
+		cmd = strings.TrimSpace(parts[1])
+	}
+	if len(parts) == 3 {
+		if pid, perr := strconv.Atoi(strings.TrimSpace(parts[2])); perr == nil {
+			app = classifyPaneTree(pid)
+		}
+	}
+	return cwd, cmd, app, nil
+}
+
+// Cwd is a thin wrapper around PaneInfo for callers that only need the cwd
+// (e.g. the AI handler resolving project paths).
+func (m *Manager) Cwd(id string) (string, error) {
+	cwd, _, _, err := m.PaneInfo(id)
+	return cwd, err
+}
+
+// classifyPaneTree walks the descendants of panePid via `ps` and returns
+// "claude" / "codex" if a matching process is found anywhere in the tree, or
+// "" otherwise. We use ps (BSD + GNU compatible flags) instead of /proc so
+// the same code path works on Linux and macOS without build tags.
+//
+// Matching logic distinguishes:
+//   - direct binary: process basename is "claude" or "codex"
+//   - node launcher: process basename is "node" and the command path contains
+//     a path segment like "/claude/", "/claude-", "/claude.js", or trailing
+//     "/claude" (same for codex). A plain `node script.js` won't match.
+func classifyPaneTree(panePid int) string {
+	out, err := exec.Command("ps", "-axww", "-o", "pid=,ppid=,command=").Output()
+	if err != nil {
+		return ""
+	}
+	type rec struct {
+		ppid int
+		cmd  string
+	}
+	procs := make(map[int]rec, 256)
+	children := make(map[int][]int, 256)
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		pid, e1 := strconv.Atoi(fields[0])
+		ppid, e2 := strconv.Atoi(fields[1])
+		if e1 != nil || e2 != nil {
+			continue
+		}
+		cmd := strings.Join(fields[2:], " ")
+		procs[pid] = rec{ppid: ppid, cmd: cmd}
+		children[ppid] = append(children[ppid], pid)
+	}
+	queue := []int{panePid}
+	seen := map[int]bool{panePid: true}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, c := range children[cur] {
+			if seen[c] {
+				continue
+			}
+			seen[c] = true
+			queue = append(queue, c)
+			if app := classifyCommand(procs[c].cmd); app != "" {
+				return app
+			}
+		}
+	}
+	return ""
+}
+
+func classifyCommand(cmd string) string {
+	space := strings.IndexByte(cmd, ' ')
+	head := cmd
+	if space > 0 {
+		head = cmd[:space]
+	}
+	switch filepath.Base(head) {
+	case "claude":
+		return "claude"
+	case "codex":
+		return "codex"
+	case "node":
+		if containsExecSegment(cmd, "claude") {
+			return "claude"
+		}
+		if containsExecSegment(cmd, "codex") {
+			return "codex"
+		}
+	}
+	return ""
+}
+
+// containsExecSegment looks for `name` as a path segment or executable suffix
+// in a command line. Matches "/name/", "/name-", "/name.js", or "/name" at
+// end of a token — enough to identify a node-launched CLI without matching
+// arbitrary mentions of the word elsewhere in the args.
+func containsExecSegment(cmd, name string) bool {
+	if strings.Contains(cmd, "/"+name+"/") ||
+		strings.Contains(cmd, "/"+name+"-") ||
+		strings.Contains(cmd, "/"+name+".js") {
+		return true
+	}
+	// "/name" at end of any space-delimited token
+	for _, tok := range strings.Fields(cmd) {
+		if strings.HasSuffix(tok, "/"+name) {
+			return true
+		}
+	}
+	return false
 }
 
 // GetOrCreate returns the named session, attaching to the tmux session of the

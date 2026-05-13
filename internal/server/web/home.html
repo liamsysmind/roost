@@ -76,7 +76,7 @@
 </head>
 <body>
   <header>
-    <span class="brand">roost</span>
+    <span class="brand">roost <span id="roost-version" title="roost version" style="color:#7a8a8a;font-family:ui-monospace,monospace;font-size:0.72rem;font-weight:400;margin-left:0.4rem;letter-spacing:0">{{VERSION}}</span></span>
     <form method="post" action="/logout">
       <button type="submit">logout</button>
     </form>
@@ -91,8 +91,8 @@
     <ul id="list" class="list"></ul>
     <div id="empty" class="empty" hidden>No sessions yet. Create one above.</div>
   </main>
-  <script src="/toast.js"></script>
-  <script src="/home.js"></script>
-  <script src="/notify.js"></script>
+  <script src="/toast.js?v={{VERSION}}"></script>
+  <script src="/home.js?v={{VERSION}}"></script>
+  <script src="/notify.js?v={{VERSION}}"></script>
 </body>
 </html>

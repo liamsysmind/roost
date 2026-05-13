@@ -585,6 +585,8 @@
 
   let cwdSyncEnabled = true;
   let lastCwdServer = '';
+  let lastCmdServer = '';
+  let lastAppServer = '';
   async function syncCwd() {
     const sid = sessionIdFromPath();
     if (!sid || !cwdSyncEnabled) return;
@@ -592,6 +594,20 @@
       const r = await fetch('/api/sessions/' + encodeURIComponent(sid) + '/cwd');
       if (!r.ok) return;
       const data = await r.json();
+      const cmd = (data.command || '').trim();
+      if (cmd !== lastCmdServer) {
+        lastCmdServer = cmd;
+        window.dispatchEvent(new CustomEvent('roost-pane-cmd-changed', {
+          detail: { command: cmd },
+        }));
+      }
+      const app = (data.app || '').trim();
+      if (app !== lastAppServer) {
+        lastAppServer = app;
+        window.dispatchEvent(new CustomEvent('roost-pane-app-changed', {
+          detail: { app: app },
+        }));
+      }
       const abs = (data.cwd || '').trim();
       if (!abs || abs === lastCwdServer) return;
       const prev = lastCwdServer;

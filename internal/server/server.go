@@ -28,15 +28,16 @@ type Server struct {
 	Notifier   *notify.Notifier
 	HookSecret string
 	Addr       string
+	Version    string
 	handler    http.Handler
 	static     fs.FS
 }
 
-func New(a *auth.Manager, sm *session.Manager, fsAPI *rfs.API, n *notify.Notifier, hookSecret, addr string) *Server {
+func New(a *auth.Manager, sm *session.Manager, fsAPI *rfs.API, n *notify.Notifier, hookSecret, addr, version string) *Server {
 	static, _ := fs.Sub(webFS, "web")
 	s := &Server{
 		Auth: a, Sessions: sm, FS: fsAPI, Notifier: n,
-		HookSecret: hookSecret, Addr: addr, static: static,
+		HookSecret: hookSecret, Addr: addr, Version: version, static: static,
 	}
 	s.setupRoutes()
 	return s
@@ -66,7 +67,8 @@ func (s *Server) setupRoutes() {
 
 	(&rfs.Handler{API: s.FS}).Mount(mux)
 	(&ai.Handler{
-		Reader: ai.NewReader(),
+		Reader:      ai.NewReader(),
+		CodexReader: ai.NewCodexReader(),
 		CwdForSession: func(sid string) string {
 			c, _ := s.Sessions.Cwd(sid)
 			return c
@@ -126,6 +128,7 @@ func (s *Server) handleLoginGet(w http.ResponseWriter, r *http.Request) {
 	}
 	errMsg := r.URL.Query().Get("error")
 	body := strings.ReplaceAll(string(b), "{{ERROR}}", errMsg)
+	body = strings.ReplaceAll(body, "{{VERSION}}", s.Version)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(body))
 }
@@ -157,8 +160,9 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "index template missing", http.StatusInternalServerError)
 		return
 	}
+	body := strings.ReplaceAll(string(b), "{{VERSION}}", s.Version)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(b)
+	_, _ = w.Write([]byte(body))
 }
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
@@ -167,8 +171,9 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "home template missing", http.StatusInternalServerError)
 		return
 	}
+	body := strings.ReplaceAll(string(b), "{{VERSION}}", s.Version)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(b)
+	_, _ = w.Write([]byte(body))
 }
 
 func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
@@ -206,13 +211,17 @@ func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSessionCwd(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	cwd, err := s.Sessions.Cwd(id)
+	cwd, cmd, app, err := s.Sessions.PaneInfo(id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"cwd": cwd})
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"cwd":     cwd,
+		"command": cmd,
+		"app":     app,
+	})
 }
 
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
@@ -230,6 +239,12 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasPrefix(path, "vendor/") {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	} else {
+		// roost's own JS/CSS changes between deploys. Without an explicit
+		// directive browsers apply heuristic freshness and silently serve
+		// stale bundles — users see the previous build's behavior even after
+		// a reload. Force revalidation so every deploy takes effect.
+		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 	}
 	_, _ = w.Write(b)
 }

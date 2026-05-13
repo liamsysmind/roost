@@ -83,7 +83,7 @@
     cursorBlink: true,
     fontFamily: 'ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace',
     fontSize: 14,
-    scrollback: 10000,
+    scrollback: 100000,
     theme: { background: '#000000', foreground: '#e6e6e6' },
     allowProposedApi: true,
   });
@@ -91,6 +91,7 @@
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(document.getElementById('term'));
+  window.roostTerm = term;
 
   try {
     term.loadAddon(new WebglAddon.WebglAddon());
@@ -145,8 +146,49 @@
       return false;
     }
 
+    // Shift+PageUp/PageDown/Home/End → scroll xterm.js viewport rather than
+    // sending the key sequence to the PTY. Works even when a TUI app has
+    // mouse tracking on and would otherwise swallow wheel events.
+    if (e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      if (e.key === 'PageUp')   { term.scrollPages(-1); return false; }
+      if (e.key === 'PageDown') { term.scrollPages(1);  return false; }
+      if (e.key === 'Home')     { term.scrollToTop();    return false; }
+      if (e.key === 'End')      { term.scrollToBottom(); return false; }
+    }
+
     return true;
   });
+
+  // Wheel scrolling: always scroll the xterm.js scrollback buffer, regardless
+  // of whether a TUI app (Codex, Claude Code, etc.) has enabled mouse tracking.
+  //
+  // xterm.js's own wheel listener is only attached when an app has enabled
+  // mouse-tracking modes, so attachCustomWheelEventHandler alone doesn't cover
+  // the common case (plain bash). And xterm.js's "native" viewport scroll
+  // (overflow-y: scroll on .xterm-viewport) doesn't reliably pick up wheel
+  // events when the WebGL canvas is overlaid on top.
+  //
+  // Solution: attach our own wheel listener on the #term container in the
+  // capture phase. This catches wheel events before anything else, scrolls
+  // the buffer via the Terminal API, and prevents default so the viewport
+  // doesn't double-scroll. Shift+wheel passes through (for `less`/`man`).
+  const termEl = document.getElementById('term');
+  termEl.addEventListener('wheel', (e) => {
+    if (e.shiftKey) return;
+    let lines;
+    if (e.deltaMode === 1) {           // DOM_DELTA_LINE
+      lines = e.deltaY;
+    } else if (e.deltaMode === 2) {    // DOM_DELTA_PAGE
+      term.scrollPages(Math.sign(e.deltaY));
+      e.preventDefault();
+      return;
+    } else {                            // DOM_DELTA_PIXEL
+      lines = e.deltaY / 24;
+    }
+    const n = lines > 0 ? Math.max(1, Math.ceil(lines)) : Math.min(-1, Math.floor(lines));
+    term.scrollLines(n);
+    e.preventDefault();
+  }, { passive: false, capture: true });
 
   const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsURL = `${wsProto}//${location.host}/ws/terminal/${encodeURIComponent(sessionID)}`;

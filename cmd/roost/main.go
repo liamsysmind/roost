@@ -141,7 +141,7 @@ func runServe(args []string) {
 
 	n := notify.NewNotifier()
 
-	log.Fatal(server.New(am, sm, fsAPI, n, cfg.Auth.HookSecret, cfg.Server.Addr).Run())
+	log.Fatal(server.New(am, sm, fsAPI, n, cfg.Auth.HookSecret, cfg.Server.Addr, version).Run())
 }
 
 func runSetup(args []string) {

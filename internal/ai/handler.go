@@ -8,7 +8,8 @@ import (
 )
 
 type Handler struct {
-	Reader *Reader
+	Reader      *Reader
+	CodexReader *CodexReader
 	// CwdForSession, if set, is consulted when a request includes
 	// ?session={id}. The returned cwd is forwarded to Reader.Active so we
 	// surface the AI session matching the terminal's working directory.
@@ -26,7 +27,21 @@ func (h *Handler) handleActive(w http.ResponseWriter, r *http.Request) {
 	if sid := r.URL.Query().Get("session"); sid != "" && h.CwdForSession != nil {
 		cwd = h.CwdForSession(sid)
 	}
-	s, err := h.Reader.Active(cwd)
+	// ?app= lets the frontend route the read to the right backing store.
+	// Claude Code stores sessions under ~/.claude/projects/; Codex stores
+	// them under ~/.codex/sessions/. They share no metadata so we can't just
+	// "scan both and merge" — the active session is whichever agent the user
+	// is currently running, which the pane-tree classifier tells us.
+	app := r.URL.Query().Get("app")
+	var (
+		s   *ActiveSession
+		err error
+	)
+	if app == "codex" && h.CodexReader != nil {
+		s, err = h.CodexReader.Active(cwd)
+	} else {
+		s, err = h.Reader.Active(cwd)
+	}
 	if err != nil {
 		writeError(w, err)
 		return
