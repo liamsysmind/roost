@@ -153,9 +153,16 @@ func (a *API) Save(relDir, name string, src io.Reader) (*Entry, error) {
 	if err := os.MkdirAll(dirAbs, 0o755); err != nil {
 		return nil, err
 	}
-	dst := filepath.Join(dirAbs, name)
-	if !a.within(dst) {
-		return nil, errors.New("path escapes root")
+	// Re-resolve including the leaf to defend against a symlink getting planted
+	// between MkdirAll and the open below. We use resolve (not resolveLeaf) so
+	// that an existing in-root symlink at the destination is followed: writing
+	// to `alias.txt` should update the target file, preserving the alias, not
+	// replace the symlink inode with a regular file. resolve still enforces
+	// containment, so a symlink pointing outside Root is rejected before we
+	// touch anything.
+	dst, err := a.resolve(filepath.ToSlash(filepath.Join(relDir, name)))
+	if err != nil {
+		return nil, err
 	}
 	tmp := dst + ".roost-upload"
 	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
@@ -187,9 +194,10 @@ func (a *API) Mkdir(rel string) error {
 	return os.MkdirAll(abs, 0o755)
 }
 
-// Remove deletes a file or empty directory.
+// Remove deletes a file or empty directory. If the target is a symlink, the
+// symlink itself is removed; the target it points to is untouched.
 func (a *API) Remove(rel string, recursive bool) error {
-	abs, err := a.resolve(rel)
+	abs, err := a.resolveLeaf(rel)
 	if err != nil {
 		return err
 	}
@@ -202,28 +210,81 @@ func (a *API) Remove(rel string, recursive bool) error {
 	return os.Remove(abs)
 }
 
-// Rename moves a file/dir within the rooted tree.
+// Rename moves a file/dir within the rooted tree. Source and destination
+// leaves are treated as-is (renaming a symlink renames the symlink, not its
+// target); only the parent directories are resolved through symlinks.
 func (a *API) Rename(from, to string) error {
-	fromAbs, err := a.resolve(from)
+	fromAbs, err := a.resolveLeaf(from)
 	if err != nil {
 		return err
 	}
-	toAbs, err := a.resolve(to)
+	toAbs, err := a.resolveLeaf(to)
 	if err != nil {
 		return err
 	}
 	return os.Rename(fromAbs, toAbs)
 }
 
-// resolve turns a Root-relative path into an absolute one and ensures the
-// result is contained within Root.
+// resolve turns a Root-relative path into an absolute one whose realpath is
+// contained within Root. Symlinks at every component (including the leaf if
+// it exists) are followed before the containment check, so a symlink inside
+// Root pointing outside is rejected rather than followed. Non-existing
+// components are tolerated — needed by Save/Mkdir whose target may not
+// exist yet — by resolving the deepest existing ancestor and re-attaching
+// the missing suffix lexically.
 func (a *API) resolve(rel string) (string, error) {
+	return a.resolveWith(rel, true)
+}
+
+// resolveLeaf is like resolve but does not follow a symlink at the final
+// component. Use for operations that should act on the leaf itself
+// (Remove, Rename) so a symlink leaf inside Root is operated on directly
+// instead of being chased to its target.
+func (a *API) resolveLeaf(rel string) (string, error) {
+	return a.resolveWith(rel, false)
+}
+
+func (a *API) resolveWith(rel string, followLeaf bool) (string, error) {
 	clean := filepath.Clean("/" + strings.TrimPrefix(strings.TrimPrefix(rel, "/"), "./"))
 	abs := filepath.Join(a.Root, clean)
-	if !a.within(abs) {
+
+	leaf := ""
+	if !followLeaf && abs != a.Root {
+		leaf = filepath.Base(abs)
+		abs = filepath.Dir(abs)
+	}
+
+	existing := abs
+	var suffix []string
+	for {
+		if _, err := os.Stat(existing); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			return "", fmt.Errorf("path escapes root: %q", rel)
+		}
+		suffix = append([]string{filepath.Base(existing)}, suffix...)
+		existing = parent
+	}
+
+	resolved, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return "", err
+	}
+	final := resolved
+	if len(suffix) > 0 {
+		final = filepath.Join(append([]string{resolved}, suffix...)...)
+	}
+	if leaf != "" {
+		final = filepath.Join(final, leaf)
+	}
+	if !a.within(final) {
 		return "", fmt.Errorf("path escapes root: %q", rel)
 	}
-	return abs, nil
+	return final, nil
 }
 
 func (a *API) within(abs string) bool {

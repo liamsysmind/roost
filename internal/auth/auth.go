@@ -7,7 +7,6 @@ package auth
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"net/http"
 	"sync"
 	"time"
@@ -26,18 +25,14 @@ type Manager struct {
 	sessions     map[string]time.Time
 }
 
-func NewManager(passwordHash, sessionSecretHex string) (*Manager, error) {
-	secret, err := hex.DecodeString(sessionSecretHex)
-	if err != nil {
-		return nil, errors.New("session_secret must be hex")
-	}
-	if len(secret) < 16 {
-		return nil, errors.New("session_secret too short (>= 32 hex chars)")
-	}
+// Session IDs are 32 bytes of crypto/rand stored in an in-memory map keyed
+// off the cookie value. There's no signing key — restarting the server
+// drops the map and logs everyone out, which is fine for a single-user tool.
+func NewManager(passwordHash string) *Manager {
 	return &Manager{
 		passwordHash: []byte(passwordHash),
 		sessions:     map[string]time.Time{},
-	}, nil
+	}
 }
 
 func (m *Manager) Verify(password string) bool {

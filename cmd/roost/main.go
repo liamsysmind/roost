@@ -115,10 +115,7 @@ func runServe(args []string) {
 		cfg.Server.Addr = *addr
 	}
 
-	am, err := auth.NewManager(cfg.Auth.PasswordHash, cfg.Auth.SessionSecret)
-	if err != nil {
-		log.Fatal(err)
-	}
+	am := auth.NewManager(cfg.Auth.PasswordHash)
 
 	sessCfg, err := cfg.ResolveSession()
 	if err != nil {
@@ -191,10 +188,6 @@ func runSetup(args []string) {
 		log.Fatal(err)
 	}
 
-	var secret [32]byte
-	if _, err := rand.Read(secret[:]); err != nil {
-		log.Fatal(err)
-	}
 	var hookSecret [32]byte
 	if _, err := rand.Read(hookSecret[:]); err != nil {
 		log.Fatal(err)
@@ -203,9 +196,8 @@ func runSetup(args []string) {
 	addr, fallback := pickListenAddr()
 	cfg := &config.Config{
 		Auth: config.Auth{
-			PasswordHash:  string(hash),
-			SessionSecret: hex.EncodeToString(secret[:]),
-			HookSecret:    hex.EncodeToString(hookSecret[:]),
+			PasswordHash: string(hash),
+			HookSecret:   hex.EncodeToString(hookSecret[:]),
 		},
 		Server: config.Server{Addr: addr},
 		Session: config.Session{
