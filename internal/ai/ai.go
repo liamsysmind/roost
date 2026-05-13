@@ -56,6 +56,15 @@ type rawEvent struct {
 	UUID      string           `json:"uuid"`
 	Message   *json.RawMessage `json:"message"`
 	Timestamp string           `json:"timestamp"`
+	// IsMeta flags entries that aren't real user input (slash-command body
+	// templates, etc.) — Claude Code sets this on programmatically-generated
+	// "user" messages.
+	IsMeta bool `json:"isMeta"`
+	// Origin labels the source of a programmatically-injected message —
+	// e.g. {"kind":"task-notification"} for background-task completion notices.
+	Origin *struct {
+		Kind string `json:"kind"`
+	} `json:"origin"`
 }
 
 // assistantMessage is the shape we care about when type == "assistant".
@@ -409,6 +418,15 @@ func (r *Reader) readActive(slug, file string, mtime time.Time) (*ActiveSession,
 			if ev.Message == nil {
 				continue
 			}
+			// Skip programmatically-generated "user" entries: slash-command
+			// body templates carry isMeta=true, task-completion notices carry
+			// origin.kind="task-notification". Neither is a real prompt.
+			if ev.IsMeta {
+				continue
+			}
+			if ev.Origin != nil && ev.Origin.Kind != "" {
+				continue
+			}
 			var m userMessage
 			if err := json.Unmarshal(*ev.Message, &m); err != nil {
 				continue
@@ -442,14 +460,17 @@ func (r *Reader) readActive(slug, file string, mtime time.Time) (*ActiveSession,
 
 // isMetaUserMessage reports whether a "user" JSONL entry's content is actually
 // Claude Code's local-command machinery (slash-command stdin/stdout, exit
-// caveat, etc.) rather than a real user-typed prompt. These show up in the
-// JSONL with type=user but should never be presented as prompts.
+// caveat, task notifications, etc.) rather than a real user-typed prompt.
+// These show up in the JSONL with type=user but should never be presented as
+// prompts. The top-level isMeta / origin filters in the caller catch the
+// structured cases; this is the content-based net for the rest.
 func isMetaUserMessage(content string) bool {
 	trimmed := strings.TrimLeft(content, " \t\r\n")
 	if trimmed == "" {
 		return false
 	}
-	if strings.HasPrefix(trimmed, "<local-command-") {
+	if strings.HasPrefix(trimmed, "<local-command-") ||
+		strings.HasPrefix(trimmed, "<task-notification>") {
 		return true
 	}
 	if strings.HasPrefix(trimmed, "<command-name>") ||
@@ -457,7 +478,43 @@ func isMetaUserMessage(content string) bool {
 		strings.HasPrefix(trimmed, "<command-args>") {
 		return true
 	}
+	// Bare slash-command name like "codex:review" — Claude Code records the
+	// invocation as a standalone user message in this form. We match
+	// "word:word" with no whitespace and no other punctuation, which catches
+	// the plugin:command convention without intercepting normal sentences
+	// that happen to contain a colon.
+	if isBareSlashCommandName(trimmed) {
+		return true
+	}
 	return false
+}
+
+func isBareSlashCommandName(s string) bool {
+	if len(s) == 0 || len(s) > 64 {
+		return false
+	}
+	colon := -1
+	for i, c := range s {
+		switch {
+		case c >= 'a' && c <= 'z',
+			c >= '0' && c <= '9',
+			c == '-', c == '_':
+			// allowed slug char
+		case c == ':':
+			if colon != -1 {
+				return false // only one colon allowed
+			}
+			colon = i
+		default:
+			return false
+		}
+	}
+	if colon <= 0 || colon == len(s)-1 {
+		return false
+	}
+	// Reject leading or trailing colon, and the segments either side must be
+	// non-empty by virtue of the index check above.
+	return true
 }
 
 func extractContentText(raw json.RawMessage) string {
