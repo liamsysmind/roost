@@ -330,6 +330,28 @@ Existing tools didn't fit:
 `roost` is the missing intersection: terminal + file tree + AI panel,
 self-hosted on your own machine, accessed through any browser.
 
+### roost vs. code-server
+
+[`code-server`] is the closest substitute and the one people most often
+ask about. Both put a workspace in your browser. The shape is very
+different:
+
+|                          | code-server                           | roost                                                                                |
+|--------------------------|---------------------------------------|--------------------------------------------------------------------------------------|
+| Centre of the UI         | VS Code editor                        | the terminal                                                                         |
+| File editing             | Full VS Code editor + extensions      | None — edit inside the terminal with `vim`, `nano`, your usual tools                 |
+| Terminal                 | Bottom panel, foldable                | The main surface                                                                     |
+| AI integration           | Copilot extension at the syntax layer | Activity panel that reads Claude Code / Codex session logs at the conversation layer |
+| Session persistence      | Reattach on reload                    | `tmux`-backed; survives disconnects, network changes, server restarts                |
+| Sharing a screen         | One workspace per server              | Multiple named sessions on URLs you can re-open from another device or tab           |
+| Install footprint        | Node + bundled VS Code                | One Go binary                                                                        |
+
+If you want VS Code in a browser, use code-server. If you want a
+terminal-first workspace where the AI's conversation history is a
+first-class thing you can scroll back to, that's the gap `roost` fills.
+
+[`code-server`]: https://github.com/coder/code-server
+
 ---
 
 ## What roost isn't
