@@ -54,6 +54,33 @@ type codexResponseItem struct {
 	Timestamp string `json:"timestamp"`
 }
 
+// codexTokenCount is the shape of an event_msg with payload.type=="token_count".
+// Codex emits one of these per turn; the LAST one in the rollout has the
+// running totals + the most recent turn's usage. Earlier entries with
+// info==null (the "task_started" sibling) are skipped.
+type codexTokenCount struct {
+	Type    string `json:"type"`
+	Payload struct {
+		Type string `json:"type"`
+		Info *struct {
+			TotalTokenUsage struct {
+				InputTokens       int64 `json:"input_tokens"`
+				CachedInputTokens int64 `json:"cached_input_tokens"`
+				OutputTokens      int64 `json:"output_tokens"`
+				ReasoningTokens   int64 `json:"reasoning_output_tokens"`
+				TotalTokens       int64 `json:"total_tokens"`
+			} `json:"total_token_usage"`
+			LastTokenUsage struct {
+				InputTokens       int64 `json:"input_tokens"`
+				CachedInputTokens int64 `json:"cached_input_tokens"`
+				OutputTokens      int64 `json:"output_tokens"`
+				TotalTokens       int64 `json:"total_tokens"`
+			} `json:"last_token_usage"`
+			ModelContextWindow int64 `json:"model_context_window"`
+		} `json:"info"`
+	} `json:"payload"`
+}
+
 // Active returns the most recent rollout for the given cwd, with its user
 // prompts extracted. Returns nil if Codex isn't installed or no rollout
 // matches the cwd.
@@ -165,6 +192,7 @@ func (r *CodexReader) readActive(path string, mtime time.Time, meta *codexSessio
 
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1<<16), 1<<22)
+	var lastUsage *codexTokenCount
 	for sc.Scan() {
 		var probe struct {
 			Type string `json:"type"`
@@ -172,34 +200,68 @@ func (r *CodexReader) readActive(path string, mtime time.Time, meta *codexSessio
 		if err := json.Unmarshal(sc.Bytes(), &probe); err != nil {
 			continue
 		}
-		if probe.Type != "response_item" {
-			continue
+		switch probe.Type {
+		case "response_item":
+			var item codexResponseItem
+			if err := json.Unmarshal(sc.Bytes(), &item); err != nil {
+				continue
+			}
+			if item.Payload.Type != "message" || item.Payload.Role != "user" {
+				continue
+			}
+			text := extractCodexUserText(item.Payload.Content)
+			if text == "" || isCodexEnvironmentBlock(text) {
+				continue
+			}
+			preview := text
+			if len(preview) > 140 {
+				preview = preview[:140] + "…"
+			}
+			out.Prompts = append(out.Prompts, PromptEntry{
+				Timestamp: item.Timestamp,
+				Preview:   preview,
+			})
+		case "event_msg":
+			var probe2 struct {
+				Payload struct {
+					Type string `json:"type"`
+				} `json:"payload"`
+			}
+			if err := json.Unmarshal(sc.Bytes(), &probe2); err != nil {
+				continue
+			}
+			if probe2.Payload.Type != "token_count" {
+				continue
+			}
+			var tc codexTokenCount
+			if err := json.Unmarshal(sc.Bytes(), &tc); err != nil {
+				continue
+			}
+			// Earlier task_started-sibling token_counts have info==nil; only
+			// keep the last one with real numbers.
+			if tc.Payload.Info != nil {
+				lastUsage = &tc
+			}
 		}
-		var item codexResponseItem
-		if err := json.Unmarshal(sc.Bytes(), &item); err != nil {
-			continue
-		}
-		if item.Payload.Type != "message" || item.Payload.Role != "user" {
-			continue
-		}
-		text := extractCodexUserText(item.Payload.Content)
-		if text == "" || isCodexEnvironmentBlock(text) {
-			continue
-		}
-		preview := text
-		if len(preview) > 140 {
-			preview = preview[:140] + "…"
-		}
-		out.Prompts = append(out.Prompts, PromptEntry{
-			Timestamp: item.Timestamp,
-			Preview:   preview,
-		})
 	}
 	sort.SliceStable(out.Prompts, func(i, j int) bool {
 		return out.Prompts[i].Timestamp > out.Prompts[j].Timestamp
 	})
 	if len(out.Prompts) > 40 {
 		out.Prompts = out.Prompts[:40]
+	}
+	out.Usage.Messages = len(out.Prompts)
+	if lastUsage != nil && lastUsage.Payload.Info != nil {
+		t := lastUsage.Payload.Info.TotalTokenUsage
+		l := lastUsage.Payload.Info.LastTokenUsage
+		out.Usage.InputTokens = t.InputTokens
+		out.Usage.OutputTokens = t.OutputTokens
+		// Codex doesn't expose a separate cache-write count; cached_input_tokens
+		// is the running cache hit, which maps cleanly onto cache_read.
+		out.Usage.CacheReadTokens = t.CachedInputTokens
+		// "How full is the context right now": last turn's input bytes
+		// (already includes its cached portion).
+		out.ContextTokens = l.InputTokens
 	}
 	return out, sc.Err()
 }
