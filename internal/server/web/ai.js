@@ -26,9 +26,15 @@
     return (n / 1_000_000).toFixed(2) + 'M';
   }
 
+  // Mirrors app.js's resolveSessionID so /#{id} URLs (the default after
+  // visiting '/') also resolve a session id — otherwise the AI panel would
+  // call /api/ai/active with no session= param and the server couldn't pin
+  // the active JSONL to this pane's cwd.
   function sessionIdFromPath() {
     const m = location.pathname.match(/^\/s\/([^\/?#]+)/);
-    return m ? decodeURIComponent(m[1]) : '';
+    if (m) return decodeURIComponent(m[1]);
+    if (location.hash.length > 1) return decodeURIComponent(location.hash.slice(1));
+    return '';
   }
 
   // Pane-state tracking — both come from fs.js's cwd poll (piggybacked).
@@ -239,13 +245,13 @@
     scrollToRow(foundRow);
   }
 
-  // Match a typical interactive shell prompt:
-  //   user@host:path$ command
-  //   user@host:path# command   (root)
-  // Returns null if the line doesn't look like a shell prompt + command. The
-  // pattern is intentionally narrow — matching looser patterns like "* $ *"
-  // would catch arbitrary text and pollute the anchor list.
-  const SHELL_PROMPT_RE = /^[\w][\w.-]*@[\w.-]+:[^\s$#]*[$#]\s+(\S.*)$/;
+  // Match a typical interactive shell prompt + command. Supports both:
+  //   bash default:  user@host:path$ command          (':' joins, ends $ or #)
+  //   zsh default:   user@host path % command         (space joins, ends %)
+  // The two branches keep the pattern narrow enough to avoid eating arbitrary
+  // output lines that happen to contain "@" and "$".
+  const SHELL_PROMPT_RE =
+    /^[\w][\w.-]*@[\w.-]+(?::\S*[$#]|\s+\S+\s+[$#%])\s+(\S.*)$/;
   function scanShellCommands(max) {
     const term = window.roostTerm;
     if (!term) return [];

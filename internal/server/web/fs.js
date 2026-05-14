@@ -613,10 +613,15 @@
   });
 
   // --- cwd sync: follow the terminal session's pane_current_path ---
-  // Only active on /s/{id} pages; home page leaves this alone.
+  // Resolves the session id from either /s/{id} or /#{id} — must mirror
+  // app.js's resolveSessionID exactly, otherwise the file tree and AI panel
+  // silently drop cwd sync for fragment-style URLs (which is what visiting
+  // the root '/' auto-rewrites to).
   function sessionIdFromPath() {
     const m = location.pathname.match(/^\/s\/([^\/?#]+)/);
-    return m ? decodeURIComponent(m[1]) : '';
+    if (m) return decodeURIComponent(m[1]);
+    if (location.hash.length > 1) return decodeURIComponent(location.hash.slice(1));
+    return '';
   }
 
   function relToRoot(abs) {
