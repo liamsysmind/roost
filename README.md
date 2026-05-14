@@ -2,11 +2,16 @@
 
 **A self-hosted browser workspace for terminal-first AI coding.**
 
-Install one binary on your dev box. SSH-tunnel it. Open a browser. You get a
-real terminal, a file tree, and a panel that watches your Claude Code or
-Codex session — all in one page, on every device you own.
+Install one binary on your Linux dev box. SSH-tunnel it. Open a browser
+from your laptop — Windows, macOS, any OS. You get a real terminal, a
+file tree, and a panel that watches your Claude Code or Codex session —
+all in one page, on every device you own.
 
-![Sessions home page](docs/img/sessions.png)
+![roost — Windows browser into a Linux dev box over SSH tunnel](docs/img/demo.gif)
+
+> **Tested daily**: Windows browser → Linux server, SSH-tunneled. macOS
+> as the *server* works but is rougher around the edges right now — fixes
+> in progress.
 
 - **Terminal that survives disconnects.** Backed by `tmux` under the hood,
   so closing your laptop, switching networks, or restarting the server
@@ -45,10 +50,13 @@ Codex session — all in one page, on every device you own.
 
 ### Requirements
 
-- Linux or macOS host with `tmux` ≥ 3.0 (required at runtime — `roost`
-  refuses to start without it: `apt install tmux` / `brew install tmux`).
-- A modern browser on whatever you SSH from.
-- Go 1.23+ if you're building from source. Prebuilt binaries: see
+- **Server**: Linux with `tmux` ≥ 3.0 (`apt install tmux`). `roost`
+  refuses to start without `tmux`. macOS is supported
+  (`brew install tmux`) but is not the daily-tested combo — expect
+  rougher edges.
+- **Browser**: any modern browser. Daily-tested with Chrome on Windows
+  and Chrome/Firefox on Linux.
+- **Build**: Go 1.23+ if building from source. Prebuilt binaries on
   [Releases](https://github.com/liamsysmind/roost/releases).
 
 ### Install
@@ -114,6 +122,8 @@ shell. Each session is a separate URL like `/s/zephyr-build`, so:
 - you can rename or delete sessions from the home list
 - two tabs on the same URL get the **same** live view — useful for
   showing the screen to a colleague over a screenshare
+
+![Sessions home page](docs/img/sessions.png)
 
 ### Terminal
 
