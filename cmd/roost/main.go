@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -82,23 +83,34 @@ func runHookInfo(args []string) {
 		`-d "body=Agent stopped, waiting for input" >/dev/null`,
 		addr, cfg.Auth.HookSecret)
 
-	fmt.Print(`# Add to ~/.claude/settings.json to push a notification when Claude Code stops:
-
-{
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "` + curl + `"
-          }
-        ]
-      }
-    ]
-  }
-}
-`)
+	// Build the snippet via encoding/json so the curl string's embedded
+	// double quotes get escaped correctly — pasting raw curl into a JSON
+	// string field would otherwise produce invalid JSON.
+	snippet := map[string]any{
+		"hooks": map[string]any{
+			"Stop": []any{
+				map[string]any{
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": curl,
+						},
+					},
+				},
+			},
+		},
+	}
+	fmt.Println("# Add to ~/.claude/settings.json to push a notification when Claude Code stops:")
+	fmt.Println()
+	// SetEscapeHTML(false) keeps '>' from becoming '>' in the curl
+	// redirect — still valid JSON either way, but the snippet is meant to
+	// be read by humans.
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(snippet); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func runServe(args []string) {
