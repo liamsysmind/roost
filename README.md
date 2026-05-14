@@ -61,6 +61,18 @@ all in one page, on every device you own.
 
 ### Install
 
+**Prebuilt tarball** (Linux / macOS × amd64 / arm64) — grab from
+[Releases](https://github.com/liamsysmind/roost/releases/latest):
+
+```bash
+curl -LO https://github.com/liamsysmind/roost/releases/latest/download/roost-v0.1.0-linux-amd64.tar.gz
+tar -xzf roost-v0.1.0-linux-amd64.tar.gz
+cd roost-v0.1.0-linux-amd64
+sudo install -m 0755 roost /usr/local/bin/roost   # optional
+```
+
+**Or build from source:**
+
 ```bash
 git clone https://github.com/liamsysmind/roost && cd roost
 make                       # fetches vendored JS deps (first run) + builds ./roost
