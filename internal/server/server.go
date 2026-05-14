@@ -22,22 +22,25 @@ import (
 var webFS embed.FS
 
 type Server struct {
-	Auth       *auth.Manager
-	Sessions   *session.Manager
-	FS         *rfs.API
-	Notifier   *notify.Notifier
-	HookSecret string
-	Addr       string
-	Version    string
-	handler    http.Handler
-	static     fs.FS
+	Auth           *auth.Manager
+	Sessions       *session.Manager
+	FS             *rfs.API
+	Notifier       *notify.Notifier
+	HookSecret     string
+	Addr           string
+	Version        string
+	IdleAlertAfter time.Duration
+	handler        http.Handler
+	static         fs.FS
 }
 
-func New(a *auth.Manager, sm *session.Manager, fsAPI *rfs.API, n *notify.Notifier, hookSecret, addr, version string) *Server {
+func New(a *auth.Manager, sm *session.Manager, fsAPI *rfs.API, n *notify.Notifier, hookSecret, addr, version string, idleAlertAfter time.Duration) *Server {
 	static, _ := fs.Sub(webFS, "web")
 	s := &Server{
 		Auth: a, Sessions: sm, FS: fsAPI, Notifier: n,
-		HookSecret: hookSecret, Addr: addr, Version: version, static: static,
+		HookSecret: hookSecret, Addr: addr, Version: version,
+		IdleAlertAfter: idleAlertAfter,
+		static:         static,
 	}
 	s.setupRoutes()
 	return s
@@ -263,8 +266,13 @@ func (s *Server) handleNotifyStream(w http.ResponseWriter, r *http.Request) {
 	ch := s.Notifier.Subscribe()
 	defer s.Notifier.Unsubscribe(ch)
 
-	// Send a hello so the client knows the stream is live.
-	fmt.Fprintf(w, "event: hello\ndata: {}\n\n")
+	// Send a hello so the client knows the stream is live, and pass the
+	// idle-alert threshold so the client can gate Stop-hook notifications
+	// without re-fetching config on every event.
+	helloData, _ := json.Marshal(map[string]any{
+		"idle_alert_after_ms": s.IdleAlertAfter.Milliseconds(),
+	})
+	fmt.Fprintf(w, "event: hello\ndata: %s\n\n", helloData)
 	flusher.Flush()
 
 	tick := time.NewTicker(15 * time.Second)
@@ -315,6 +323,7 @@ func (s *Server) handleNotifyPost(w http.ResponseWriter, r *http.Request) {
 		Title:   title,
 		Body:    body,
 		Session: r.FormValue("session"),
+		Cwd:     strings.TrimSpace(r.FormValue("cwd")),
 		Source:  source,
 	})
 	w.WriteHeader(http.StatusNoContent)

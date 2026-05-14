@@ -7,7 +7,7 @@ on a personal dev box. Single-user; not multi-tenant.
 ## Layout
 
 ```
-cmd/roost/main.go             # CLI entry: serve / setup / hook-info / version
+cmd/roost/main.go             # CLI entry: serve / setup / hook-info / notify-stop / version
 internal/
   auth/        # bcrypt + cookie session middleware
   config/      # TOML loader (~/.config/roost/config.toml)
@@ -96,7 +96,14 @@ proxy, etc.) rather than into this codebase.
   required. Paths outside `[fs] root` are ignored silently.
 - **Hook secret is the trapdoor.** `POST /api/notify` accepts the
   `X-Roost-Hook-Secret` header instead of a cookie so local hooks can push
-  without a UI session. `roost hook-info` prints a ready-to-paste snippet.
+  without a UI session. The hook is a one-line `roost notify-stop`
+  invocation (printed by `roost hook-info`); the binary reads Claude
+  Code's Stop JSON from stdin, extracts cwd, and POSTs.
+- **Stop-hook gating is client-side.** Server fans out every notification;
+  notify.js only fires the OS toast when the tab matches all of: same
+  cwd as the event, hidden/unfocused, `currentApp === 'claude'`, idle
+  longer than `[notify] idle_alert_after` (default 30s). Events without
+  a `cwd` (legacy snippets, manual UI POSTs) bypass the gate.
 
 ## Code conventions
 

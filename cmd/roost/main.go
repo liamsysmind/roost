@@ -10,8 +10,12 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/term"
@@ -38,6 +42,8 @@ func main() {
 		runSetup(os.Args[2:])
 	case "hook-info":
 		runHookInfo(os.Args[2:])
+	case "notify-stop":
+		runNotifyStop(os.Args[2:])
 	case "version":
 		fmt.Println("roost", version)
 	case "-h", "--help", "help":
@@ -57,12 +63,71 @@ Usage:
   roost serve [--config PATH] [--addr HOST:PORT]
                                    run the HTTP server
   roost hook-info [--config PATH]  print example Claude Code Stop hook
+  roost notify-stop [--config PATH]
+                                   reads Claude Code Stop hook JSON on stdin,
+                                   posts a cwd-tagged notification
   roost version
 `)
 }
 
 func runHookInfo(args []string) {
 	fs := flag.NewFlagSet("hook-info", flag.ExitOnError)
+	cfgPath := fs.String("config", config.DefaultPath(), "path to config.toml")
+	_ = fs.Parse(args)
+
+	if _, err := config.Load(*cfgPath); err != nil {
+		log.Fatal(err)
+	}
+
+	// Resolve the absolute path to this binary so the snippet works under
+	// launchd-spawned hooks where PATH is minimal.
+	exe, err := os.Executable()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	cmd := exe + " notify-stop"
+	if *cfgPath != config.DefaultPath() {
+		cmd += " --config " + shellQuote(*cfgPath)
+	}
+
+	snippet := map[string]any{
+		"hooks": map[string]any{
+			"Stop": []any{
+				map[string]any{
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": cmd,
+						},
+					},
+				},
+			},
+		},
+	}
+	fmt.Println("# Add to ~/.claude/settings.json to push a cwd-tagged notification when Claude Code stops:")
+	fmt.Println()
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(snippet); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// shellQuote single-quotes s for safe inclusion in a /bin/sh command line.
+// Embedded single quotes become '\''.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// runNotifyStop is the binary-side companion to the hook snippet printed by
+// runHookInfo. It reads Claude Code's Stop hook JSON on stdin, extracts cwd,
+// and POSTs a notification with the hook secret. Designed so the hook config
+// can be a single command with no shell-quoting traps and no jq/python
+// dependency.
+func runNotifyStop(args []string) {
+	fs := flag.NewFlagSet("notify-stop", flag.ExitOnError)
 	cfgPath := fs.String("config", config.DefaultPath(), "path to config.toml")
 	_ = fs.Parse(args)
 
@@ -73,43 +138,47 @@ func runHookInfo(args []string) {
 	if cfg.Auth.HookSecret == "" {
 		log.Fatal("config has no hook_secret; run `roost setup` to regenerate")
 	}
+
+	// Stop hook stdin shape (best-effort — unknown fields ignored).
+	var input struct {
+		Cwd       string `json:"cwd"`
+		SessionID string `json:"session_id"`
+	}
+	raw, _ := io.ReadAll(os.Stdin)
+	_ = json.Unmarshal(raw, &input) // empty / malformed → cwd just stays ""
+
+	form := url.Values{}
+	form.Set("title", "Claude Code idle")
+	form.Set("body", "Agent stopped, waiting for input")
+	if input.Cwd != "" {
+		form.Set("cwd", input.Cwd)
+	}
+	if input.SessionID != "" {
+		form.Set("session", input.SessionID)
+	}
+
 	addr := cfg.Server.Addr
 	if addr == "" {
 		addr = "127.0.0.1:8080"
 	}
-	curl := fmt.Sprintf(`curl -sX POST http://%s/api/notify `+
-		`-H "X-Roost-Hook-Secret: %s" `+
-		`-d "title=Claude Code idle" `+
-		`-d "body=Agent stopped, waiting for input" >/dev/null`,
-		addr, cfg.Auth.HookSecret)
-
-	// Build the snippet via encoding/json so the curl string's embedded
-	// double quotes get escaped correctly — pasting raw curl into a JSON
-	// string field would otherwise produce invalid JSON.
-	snippet := map[string]any{
-		"hooks": map[string]any{
-			"Stop": []any{
-				map[string]any{
-					"hooks": []any{
-						map[string]any{
-							"type":    "command",
-							"command": curl,
-						},
-					},
-				},
-			},
-		},
-	}
-	fmt.Println("# Add to ~/.claude/settings.json to push a notification when Claude Code stops:")
-	fmt.Println()
-	// SetEscapeHTML(false) keeps '>' from becoming '>' in the curl
-	// redirect — still valid JSON either way, but the snippet is meant to
-	// be read by humans.
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(snippet); err != nil {
+	req, err := http.NewRequest(http.MethodPost,
+		"http://"+addr+"/api/notify",
+		strings.NewReader(form.Encode()))
+	if err != nil {
 		log.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Roost-Hook-Secret", cfg.Auth.HookSecret)
+
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		log.Fatalf("POST /api/notify: %s — %s", resp.Status, strings.TrimSpace(string(b)))
 	}
 }
 
@@ -150,7 +219,10 @@ func runServe(args []string) {
 
 	n := notify.NewNotifier()
 
-	log.Fatal(server.New(am, sm, fsAPI, n, cfg.Auth.HookSecret, cfg.Server.Addr, version).Run())
+	// Validated in config.Load; ParseDuration is safe here.
+	idleAlert, _ := time.ParseDuration(cfg.Notify.IdleAlertAfter)
+
+	log.Fatal(server.New(am, sm, fsAPI, n, cfg.Auth.HookSecret, cfg.Server.Addr, version, idleAlert).Run())
 }
 
 func runSetup(args []string) {

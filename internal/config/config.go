@@ -16,6 +16,17 @@ type Config struct {
 	Server  Server  `toml:"server"`
 	Session Session `toml:"session"`
 	FS      FS      `toml:"fs"`
+	Notify  Notify  `toml:"notify"`
+}
+
+// Notify configures push-notification gating.
+//
+//   - IdleAlertAfter: a tab only fires an OS notification for a Stop hook
+//     when the tab has been idle (no key/mouse activity) for at least this
+//     long. Prevents Claude's normal stop/continue cycle from beeping the
+//     tab the user is actively typing into. Default 30s.
+type Notify struct {
+	IdleAlertAfter string `toml:"idle_alert_after"`
 }
 
 // FS configures the filesystem API surface.
@@ -121,6 +132,12 @@ func Load(path string) (*Config, error) {
 		if err == nil {
 			c.FS.Root = home
 		}
+	}
+	if c.Notify.IdleAlertAfter == "" {
+		c.Notify.IdleAlertAfter = "30s"
+	}
+	if _, err := time.ParseDuration(c.Notify.IdleAlertAfter); err != nil {
+		return nil, fmt.Errorf("notify.idle_alert_after: %w", err)
 	}
 	return &c, nil
 }

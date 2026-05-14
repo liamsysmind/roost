@@ -11,10 +11,16 @@ import (
 )
 
 // Notification is the canonical shape pushed to clients.
+//
+// Cwd, when set, lets the client gate the OS notification: only browser
+// tabs whose pane is sitting in the same cwd should alert. Empty Cwd
+// means "no targeting hint" — the client falls back to alerting all tabs
+// (legacy hook snippets that don't carry cwd).
 type Notification struct {
 	Title     string    `json:"title"`
 	Body      string    `json:"body"`
 	Session   string    `json:"session,omitempty"`
+	Cwd       string    `json:"cwd,omitempty"`
 	Source    string    `json:"source,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 }
