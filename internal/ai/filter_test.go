@@ -12,6 +12,7 @@ func TestIsMetaUserMessage(t *testing.T) {
 		"codex:review",
 		"claude:thinking",
 		"plugin-with-dash:cmd_with_under",
+		"This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.\n\nSummary:\n1. Primary Request and Intent: …",
 	}
 	for _, c := range noise {
 		if !isMetaUserMessage(c) {

@@ -60,6 +60,11 @@ type rawEvent struct {
 	// templates, etc.) — Claude Code sets this on programmatically-generated
 	// "user" messages.
 	IsMeta bool `json:"isMeta"`
+	// IsCompactSummary flags the auto-injected "This session is being
+	// continued from a previous conversation…" body that Claude Code writes
+	// after a context-window compaction. It's structurally a user message but
+	// not user input.
+	IsCompactSummary bool `json:"isCompactSummary"`
 	// Origin labels the source of a programmatically-injected message —
 	// e.g. {"kind":"task-notification"} for background-task completion notices.
 	Origin *struct {
@@ -420,8 +425,9 @@ func (r *Reader) readActive(slug, file string, mtime time.Time) (*ActiveSession,
 			}
 			// Skip programmatically-generated "user" entries: slash-command
 			// body templates carry isMeta=true, task-completion notices carry
-			// origin.kind="task-notification". Neither is a real prompt.
-			if ev.IsMeta {
+			// origin.kind="task-notification", and post-compaction continuation
+			// bodies carry isCompactSummary=true. None is a real prompt.
+			if ev.IsMeta || ev.IsCompactSummary {
 				continue
 			}
 			if ev.Origin != nil && ev.Origin.Kind != "" {
@@ -476,6 +482,12 @@ func isMetaUserMessage(content string) bool {
 	if strings.HasPrefix(trimmed, "<command-name>") ||
 		strings.HasPrefix(trimmed, "<command-message>") ||
 		strings.HasPrefix(trimmed, "<command-args>") {
+		return true
+	}
+	// Post-compaction continuation body. The top-level isCompactSummary flag
+	// is the primary filter; this is the content-based net in case Claude
+	// Code ever emits the body without the flag set.
+	if strings.HasPrefix(trimmed, "This session is being continued from a previous conversation") {
 		return true
 	}
 	// Bare slash-command name like "codex:review" — Claude Code records the
