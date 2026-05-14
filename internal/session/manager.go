@@ -146,12 +146,15 @@ func (m *Manager) killTmuxSession(id string) {
 // derives cwd and the foreground command from the foreground process's
 // /proc/<pid>; agent detection walks ps output from the pane's shell PID. We
 // avoid the "=" exact-match prefix because display-message returns empty for
-// it (unlike has-session / kill-session).
+// it (unlike has-session / kill-session). The -u flag is required: without a
+// UTF-8 locale tmux rewrites the 0x1f delimiter to '_', leaving the three
+// fields glued together (so cwd becomes "/tmp/x_bash_42" and the split fails).
 func (m *Manager) PaneInfo(id string) (cwd, cmd, app string, err error) {
 	if e := ValidateID(id); e != nil {
 		return "", "", "", e
 	}
 	out, e := exec.Command("tmux",
+		"-u",
 		"-f", m.tmuxConfPath,
 		"display-message", "-t", id,
 		"-p", "#{pane_current_path}\x1f#{pane_current_command}\x1f#{pane_pid}").Output()
