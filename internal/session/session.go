@@ -165,9 +165,12 @@ func (s *Session) readLoop() {
 	}
 }
 
-// Attach registers a client and replays the log tail before they go live.
-// Holding the session mutex around snapshot+register ensures no live byte
-// is lost between replay and broadcast.
+// Attach registers a client and stages the log tail for replay. Holding
+// the session mutex around snapshot+register ensures no live byte slips
+// between the snapshot and the moment broadcast starts seeing this client.
+// The replay buffer itself is streamed out by the client's WriteLoop in
+// small chunks so xterm.js can render progressively (see drainReplay) —
+// large scrollback no longer freezes the browser tab on attach.
 func (s *Session) Attach(c *Client) error {
 	if s.IsClosed() {
 		return errors.New("session is closed")
@@ -179,7 +182,7 @@ func (s *Session) Attach(c *Client) error {
 		return err
 	}
 	if len(snap) > 0 {
-		c.send(snap)
+		c.queueReplay(snap)
 	}
 	s.clients[c] = struct{}{}
 	return nil

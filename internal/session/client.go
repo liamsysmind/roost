@@ -15,6 +15,12 @@ type Client struct {
 	conn *websocket.Conn
 	out  chan []byte
 
+	// replay is scrollback handed to us by Attach; WriteLoop streams it
+	// out as small frames before draining live broadcast. Owned solely by
+	// WriteLoop after Attach returns — `go WriteLoop()` happens-after the
+	// queueReplay write, so no mutex is needed.
+	replay []byte
+
 	closeOnce sync.Once
 	closed    chan struct{}
 
@@ -46,6 +52,23 @@ func (c *Client) send(b []byte) {
 	}
 }
 
+// queueReplay records scrollback to be streamed out by WriteLoop before any
+// live broadcast. Caller (Session.Attach) holds the session mutex while
+// calling this and while adding the client to the broadcast set, which is
+// what keeps replay-then-live ordering intact. Must be called at most once,
+// before WriteLoop is started.
+func (c *Client) queueReplay(b []byte) {
+	c.replay = b
+}
+
+// replayChunkSize bounds each scrollback frame. xterm.js parses incoming
+// data on the main thread; a single multi-MB frame freezes the tab until
+// parsing finishes, with no opportunity to repaint. Splitting into ~64 KB
+// frames lets the browser interleave parsing with rendering so the user
+// sees the terminal fill in progressively instead of staring at a blank
+// page.
+const replayChunkSize = 64 * 1024
+
 // pingInterval is how often we send a WS ping frame to keep idle proxies
 // (notably Cloudflare's ~100s WebSocket idle timeout) from dropping the
 // connection while the user just stares at the terminal. Browsers respond
@@ -54,8 +77,12 @@ const pingInterval = 30 * time.Second
 
 // WriteLoop pumps the out channel to the WebSocket until Close is called
 // or the connection errors out. Also drives a ping ticker so connections
-// behind idle-timing proxies stay alive.
+// behind idle-timing proxies stay alive. If Attach handed us scrollback
+// via queueReplay, that is streamed out in chunks first.
 func (c *Client) WriteLoop() {
+	if !c.drainReplay() {
+		return
+	}
 	t := time.NewTicker(pingInterval)
 	defer t.Stop()
 	for {
@@ -75,6 +102,30 @@ func (c *Client) WriteLoop() {
 			return
 		}
 	}
+}
+
+// drainReplay streams the queued scrollback as chunked binary frames.
+// Returns false if the connection died or the client was closed mid-way,
+// in which case the caller (WriteLoop) should bail. Live bytes that arrive
+// during replay queue up in c.out and are delivered immediately after.
+func (c *Client) drainReplay() bool {
+	for len(c.replay) > 0 {
+		select {
+		case <-c.closed:
+			return false
+		default:
+		}
+		n := replayChunkSize
+		if n > len(c.replay) {
+			n = len(c.replay)
+		}
+		if err := c.conn.WriteMessage(websocket.BinaryMessage, c.replay[:n]); err != nil {
+			return false
+		}
+		c.replay = c.replay[n:]
+	}
+	c.replay = nil
+	return true
 }
 
 // closeWith sends a WebSocket close frame and signals the writer to stop.
