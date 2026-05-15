@@ -144,6 +144,68 @@
     #fprogress .meta { color: #6a8; font-family: ui-monospace, monospace; white-space: nowrap; }
     #fprogress .bar { background: #1a1a1a; height: 5px; border-radius: 3px; overflow: hidden; }
     #fprogress .fill { background: linear-gradient(90deg, #4caf80, #5cbf90); height: 100%; width: 0%; transition: width 0.1s linear; }
+    #fprogress .cancel {
+      background: transparent; color: #9aa; border: 1px solid #333;
+      padding: 0 6px; border-radius: 3px; font-size: 0.7rem; cursor: pointer;
+      display: none;
+    }
+    #fprogress.cancellable .cancel { display: inline-block; }
+    #fprogress .cancel:hover { color: #f88; border-color: #844; }
+
+    /* upload confirm modal */
+    #fconfirm {
+      position: fixed; inset: 0; display: none;
+      align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.7); z-index: 25;
+      backdrop-filter: blur(3px);
+    }
+    #fconfirm.open { display: flex; }
+    #fconfirm .box {
+      background: #111; border: 1px solid #1f2a30; border-radius: 6px;
+      width: min(560px, 92vw); max-height: 78vh;
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    #fconfirm .head {
+      display: flex; align-items: center; gap: 0.5rem;
+      padding: 0.55rem 0.9rem; border-bottom: 1px solid #1c1c1c;
+      font-size: 0.82rem; color: #cdb; font-family: ui-monospace, monospace;
+    }
+    #fconfirm .head .title { flex: 1; }
+    #fconfirm .head .close {
+      background: transparent; color: #9aa; border: 1px solid #333;
+      padding: 3px 9px; border-radius: 4px; font-size: 0.72rem; cursor: pointer;
+    }
+    #fconfirm .head .close:hover { color: #fff; border-color: #555; }
+    #fconfirm .body {
+      padding: 0.7rem 0.9rem; overflow: auto; color: #cfd;
+      font-size: 0.78rem; font-family: ui-monospace, monospace;
+    }
+    #fconfirm .body .dest { color: #9aa; margin-bottom: 0.4rem; }
+    #fconfirm .body .dest code { color: #cdb; }
+    #fconfirm .body .total { color: #6a8; margin-bottom: 0.6rem; }
+    #fconfirm .body .files { list-style: none; padding: 0; margin: 0; }
+    #fconfirm .body .files li {
+      display: flex; justify-content: space-between; gap: 0.6rem;
+      padding: 0.18rem 0; border-bottom: 1px dotted #1c1c1c; color: #cdb;
+    }
+    #fconfirm .body .files li:last-child { border-bottom: none; }
+    #fconfirm .body .files li.more { color: #888; font-style: italic; justify-content: center; }
+    #fconfirm .body .files .s { color: #6a8; white-space: nowrap; }
+    #fconfirm .body .files .n {
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    #fconfirm .foot {
+      display: flex; gap: 0.5rem; justify-content: flex-end;
+      padding: 0.55rem 0.9rem; border-top: 1px solid #1c1c1c;
+    }
+    #fconfirm .foot button {
+      background: transparent; color: #9aa; border: 1px solid #333;
+      padding: 5px 14px; border-radius: 4px; font-size: 0.78rem; cursor: pointer;
+      font-family: inherit;
+    }
+    #fconfirm .foot .ok { color: #cdb; border-color: #4caf80; }
+    #fconfirm .foot .ok:hover { color: #fff; background: #1a2a22; }
+    #fconfirm .foot .cancel:hover { color: #f88; border-color: #844; }
 
     /* preview modal */
     #preview {
@@ -295,7 +357,11 @@
         </div>
         <div id="ftree"></div>
         <div id="fprogress">
-          <div class="row"><span class="label"></span><span class="meta"></span></div>
+          <div class="row">
+            <span class="label"></span>
+            <span class="meta"></span>
+            <button class="cancel" type="button" title="cancel">✕</button>
+          </div>
           <div class="bar"><div class="fill"></div></div>
         </div>
         <div id="fstatus">drag files here →</div>
@@ -322,6 +388,23 @@
         <button class="close" title="close (Esc)">✕</button>
       </div>
       <div class="body"></div>
+    </div>
+  </div>
+  <div id="fconfirm">
+    <div class="box">
+      <div class="head">
+        <span class="title">Confirm upload</span>
+        <button class="close" type="button" title="close (Esc)">✕</button>
+      </div>
+      <div class="body">
+        <div class="dest">→ <code></code></div>
+        <div class="total"></div>
+        <ul class="files"></ul>
+      </div>
+      <div class="foot">
+        <button class="cancel" type="button">Cancel</button>
+        <button class="ok" type="button">Upload</button>
+      </div>
     </div>
   </div>
   <script src="/vendor/xterm.js"></script>

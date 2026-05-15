@@ -42,13 +42,24 @@
   const progLabel  = progEl.querySelector('.label');
   const progMeta   = progEl.querySelector('.meta');
   const progFill   = progEl.querySelector('.fill');
+  const progCancel = progEl.querySelector('.cancel');
   let progStart    = 0;
 
-  function showProgress(label) {
+  // showProgress takes an optional onCancel; when provided the ✕ button
+  // becomes visible and clicking it invokes the callback (which is
+  // expected to abort the underlying request).
+  function showProgress(label, onCancel) {
     progStart = Date.now();
     progLabel.textContent = label;
     progFill.style.width = '0%';
     progMeta.textContent = '…';
+    if (onCancel) {
+      progCancel.onclick = onCancel;
+      progEl.classList.add('cancellable');
+    } else {
+      progCancel.onclick = null;
+      progEl.classList.remove('cancellable');
+    }
     progEl.classList.add('active');
   }
   function updateProgress(loaded, total) {
@@ -62,6 +73,8 @@
       : `${fmtSize(loaded)} · ${fmtSize(rate)}/s`;
   }
   function hideProgress() {
+    progEl.classList.remove('cancellable');
+    progCancel.onclick = null;
     setTimeout(() => progEl.classList.remove('active'), 250);
   }
 
@@ -523,24 +536,42 @@
     if (![...(e.dataTransfer?.types || [])].includes('Files')) return;
     e.preventDefault();
   });
+  // Confirm threshold: multi-file uploads, or any single file ≥ 100 MB.
+  // Single small-file drops stay frictionless; the threshold catches the
+  // accident that motivated this gate (dragging multi-GB artifacts in by
+  // mistake — server would happily stream all of them with no UI off-ramp).
+  const CONFIRM_BYTES = 100 * 1024 * 1024;
+
   async function uploadFiles(files) {
     if (!files.length) return;
     const target = absCwd();
     const totalBytes = files.reduce((s, f) => s + (f.size || 0), 0);
+
+    const needsConfirm = files.length > 1 || (files[0]?.size || 0) >= CONFIRM_BYTES;
+    if (needsConfirm) {
+      const ok = await confirmUpload(files, target, totalBytes);
+      if (!ok) {
+        setIdleStatus('upload cancelled');
+        return;
+      }
+    }
+
     const label = files.length === 1
       ? `Upload ${files[0].name} → ${target}`
       : `Upload ${files.length} files → ${target}`;
     setStatus(`uploading ${files.length} file(s) → ${target}...`);
-    showProgress(label);
 
     const fd = new FormData();
     fd.append('path', cwd || '/');
     for (const f of files) fd.append('file', f);
 
+    const job = xhrPost('/api/fs/upload', fd, (loaded) => {
+      updateProgress(loaded, totalBytes);
+    });
+    showProgress(label, () => job.abort());
+
     try {
-      const respText = await xhrPost('/api/fs/upload', fd, (loaded) => {
-        updateProgress(loaded, totalBytes);
-      });
+      const respText = await job.promise;
       const out = JSON.parse(respText);
       hideProgress();
       setStatus(`uploaded ${out.saved?.length || files.length} file(s) → ${target}`);
@@ -548,6 +579,16 @@
       refresh();
     } catch (err) {
       hideProgress();
+      if (err && err.message === 'cancelled') {
+        // Aborting the XHR closes the TCP connection mid-multipart; the
+        // server's Save() returns an error and removes the partial
+        // .roost-upload temp file, so the destination directory stays
+        // clean.
+        setIdleStatus('upload cancelled');
+        window.toast && window.toast('Upload cancelled', 'ok');
+        refresh();
+        return;
+      }
       const msg = 'Upload failed: ' + err.message;
       setStatus(msg, true);
       window.toast && window.toast(msg, 'err');
@@ -555,10 +596,12 @@
   }
 
   // XHR-based POST so we get upload.onprogress — fetch can't measure
-  // request body progress in any current browser.
+  // request body progress in any current browser. Returns { promise, abort }
+  // so callers can both await completion and wire an abort button.
   function xhrPost(url, body, onProgress) {
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
+    const xhr = new XMLHttpRequest();
+    let aborted = false;
+    const promise = new Promise((resolve, reject) => {
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) onProgress(e.loaded, e.total);
       };
@@ -566,10 +609,67 @@
         if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.responseText);
         else reject(new Error((xhr.responseText || '').trim() || `HTTP ${xhr.status}`));
       };
-      xhr.onerror = () => reject(new Error('network error'));
+      xhr.onabort = () => reject(new Error('cancelled'));
+      xhr.onerror = () => reject(new Error(aborted ? 'cancelled' : 'network error'));
       xhr.ontimeout = () => reject(new Error('timeout'));
       xhr.open('POST', url);
       xhr.send(body);
+    });
+    return {
+      promise,
+      abort: () => { aborted = true; xhr.abort(); },
+    };
+  }
+
+  // --- upload confirm modal ---
+  const confEl     = document.getElementById('fconfirm');
+  const confDest   = confEl.querySelector('.dest code');
+  const confTotal  = confEl.querySelector('.total');
+  const confFiles  = confEl.querySelector('.files');
+  const confOk     = confEl.querySelector('.foot .ok');
+  const confCancel = confEl.querySelector('.foot .cancel');
+  const confClose  = confEl.querySelector('.head .close');
+
+  function confirmUpload(files, dest, totalBytes) {
+    confDest.textContent = dest;
+    confTotal.textContent = `${files.length} file${files.length === 1 ? '' : 's'} · ${fmtSize(totalBytes)} total`;
+    confFiles.innerHTML = '';
+    const cap = 12;
+    const visible = files.slice(0, cap);
+    for (const f of visible) {
+      const li = document.createElement('li');
+      const n = document.createElement('span'); n.className = 'n'; n.textContent = f.name;
+      const s = document.createElement('span'); s.className = 's'; s.textContent = fmtSize(f.size || 0);
+      li.appendChild(n); li.appendChild(s);
+      confFiles.appendChild(li);
+    }
+    if (files.length > visible.length) {
+      const li = document.createElement('li');
+      li.className = 'more';
+      li.textContent = `…and ${files.length - visible.length} more`;
+      confFiles.appendChild(li);
+    }
+    confEl.classList.add('open');
+
+    return new Promise((resolve) => {
+      const cleanup = (result) => {
+        confEl.classList.remove('open');
+        confOk.onclick = null;
+        confCancel.onclick = null;
+        confClose.onclick = null;
+        document.removeEventListener('keydown', onKey, true);
+        resolve(result);
+      };
+      const onKey = (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cleanup(false); }
+        else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); cleanup(true); }
+      };
+      confOk.onclick = () => cleanup(true);
+      confCancel.onclick = () => cleanup(false);
+      confClose.onclick = () => cleanup(false);
+      // Capture-phase keydown so xterm.js (terminal focus) can't swallow Esc/Enter.
+      document.addEventListener('keydown', onKey, true);
+      setTimeout(() => confOk.focus(), 0);
     });
   }
 
