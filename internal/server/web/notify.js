@@ -1,4 +1,6 @@
-// Subscribe to /api/notify/stream and surface events as OS toasts.
+// Subscribe to /api/notify/stream via a SharedWorker (so every tab in the
+// browser process shares one SSE socket — see notify-worker.js) and
+// surface matching events as OS toasts.
 //
 // Stop-hook gating: when an event carries a `cwd` (i.e. came from a
 // `roost notify-stop` invocation), the toast only fires on tabs that are
@@ -45,7 +47,7 @@
     return document.visibilityState !== 'visible' || !document.hasFocus();
   }
 
-  // Set on hello frame from /api/notify/stream.
+  // Set from the worker's hello broadcast.
   let idleAlertAfterMs = 30000;
 
   function show(n) {
@@ -71,29 +73,27 @@
     return true;
   }
 
-  let backoff = 1000;
-  function connect() {
-    const es = new EventSource('/api/notify/stream');
-    es.addEventListener('hello', (ev) => {
-      backoff = 1000;
+  const worker = new SharedWorker('/notify-worker.js');
+  worker.port.onmessage = (ev) => {
+    const m = ev.data || {};
+    if (m.type === 'hello') {
+      const h = m.data || {};
+      if (typeof h.idle_alert_after_ms === 'number' && h.idle_alert_after_ms > 0) {
+        idleAlertAfterMs = h.idle_alert_after_ms;
+      }
+      return;
+    }
+    if (m.type === 'notification') {
       try {
-        const h = JSON.parse(ev.data || '{}');
-        if (typeof h.idle_alert_after_ms === 'number' && h.idle_alert_after_ms > 0) {
-          idleAlertAfterMs = h.idle_alert_after_ms;
-        }
-      } catch (_) {}
-    });
-    es.onmessage = (ev) => {
-      try {
-        const n = JSON.parse(ev.data);
+        const n = JSON.parse(m.data);
         if (shouldAlert(n)) show(n);
       } catch (_) {}
-    };
-    es.onerror = () => {
-      es.close();
-      setTimeout(connect, backoff);
-      backoff = Math.min(backoff * 2, 30000);
-    };
-  }
-  connect();
+    }
+  };
+  worker.port.start();
+  // Tell the worker to drop our port on tab close. Without this, dead
+  // ports linger in its broadcast set until the last tab leaves.
+  window.addEventListener('pagehide', () => {
+    try { worker.port.postMessage({ type: 'bye' }); } catch (_) {}
+  });
 })();

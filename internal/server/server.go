@@ -56,6 +56,7 @@ func (s *Server) setupRoutes() {
 	mux.HandleFunc("GET /home.js", s.handleStatic)
 	mux.HandleFunc("GET /fs.js", s.handleStatic)
 	mux.HandleFunc("GET /notify.js", s.handleStatic)
+	mux.HandleFunc("GET /notify-worker.js", s.handleStatic)
 	mux.HandleFunc("GET /toast.js", s.handleStatic)
 	mux.HandleFunc("GET /ai.js", s.handleStatic)
 
