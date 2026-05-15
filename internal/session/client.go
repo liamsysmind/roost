@@ -3,6 +3,7 @@ package session
 import (
 	"log"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -45,9 +46,18 @@ func (c *Client) send(b []byte) {
 	}
 }
 
+// pingInterval is how often we send a WS ping frame to keep idle proxies
+// (notably Cloudflare's ~100s WebSocket idle timeout) from dropping the
+// connection while the user just stares at the terminal. Browsers respond
+// to pings transparently per the WS spec, so no JS-side cooperation needed.
+const pingInterval = 30 * time.Second
+
 // WriteLoop pumps the out channel to the WebSocket until Close is called
-// or the connection errors out.
+// or the connection errors out. Also drives a ping ticker so connections
+// behind idle-timing proxies stay alive.
 func (c *Client) WriteLoop() {
+	t := time.NewTicker(pingInterval)
+	defer t.Stop()
 	for {
 		select {
 		case b, ok := <-c.out:
@@ -55,6 +65,10 @@ func (c *Client) WriteLoop() {
 				return
 			}
 			if err := c.conn.WriteMessage(websocket.BinaryMessage, b); err != nil {
+				return
+			}
+		case <-t.C:
+			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}
 		case <-c.closed:
