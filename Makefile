@@ -30,7 +30,7 @@ build: $(VENDOR_STAMP)
 
 # Fast iteration: rebuild and restart the local server.
 dev: build
-	pkill -f 'roost serve' 2>/dev/null || true
+	pkill -x roost 2>/dev/null || true
 	./roost serve
 
 run: build
