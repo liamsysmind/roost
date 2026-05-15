@@ -9,8 +9,16 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
+
+// tmuxConfBasename is the deterministic filename used for the embedded tmux
+// configuration. UID is included so multiple users on the same host (each
+// running their own roost per CLAUDE.md) don't collide on file ownership.
+func tmuxConfBasename() string {
+	return fmt.Sprintf("roost-tmux-uid%d.conf", os.Getuid())
+}
 
 // Manager owns the active set of Sessions and GC-s idle ones.
 type Manager struct {
@@ -116,17 +124,50 @@ func NewManager(cfg Config) (*Manager, error) {
 	return m, nil
 }
 
+// writeTmuxConf writes the embedded tmux configuration to a deterministic
+// path in $TMPDIR and returns it. The path is stable across roost restarts so
+// non-graceful exits (SIGKILL, crash, `make dev`) don't leak a fresh file each
+// time — every invocation reuses or overwrites the same one. As a side effect
+// it also sweeps legacy random-named "roost-tmux-*.conf" files left by older
+// versions that used os.CreateTemp. We only remove files we own to stay safe
+// on shared hosts.
 func writeTmuxConf() (string, error) {
-	f, err := os.CreateTemp("", "roost-tmux-*.conf")
+	dir := os.TempDir()
+	path := filepath.Join(dir, tmuxConfBasename())
+	if err := os.WriteFile(path, []byte(roostTmuxConf), 0o600); err != nil {
+		return "", err
+	}
+	sweepLegacyTmuxConfs(dir, path)
+	return path, nil
+}
+
+// sweepLegacyTmuxConfs removes "roost-tmux-*.conf" files owned by the current
+// user except for `keep`. Errors are swallowed: cleanup is best-effort and
+// must never prevent startup.
+func sweepLegacyTmuxConfs(dir, keep string) {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return "", err
+		return
 	}
-	defer f.Close()
-	if _, err := f.WriteString(roostTmuxConf); err != nil {
-		_ = os.Remove(f.Name())
-		return "", err
+	uid := os.Getuid()
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, "roost-tmux-") || !strings.HasSuffix(name, ".conf") {
+			continue
+		}
+		full := filepath.Join(dir, name)
+		if full == keep {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if st, ok := info.Sys().(*syscall.Stat_t); ok && int(st.Uid) != uid {
+			continue
+		}
+		_ = os.Remove(full)
 	}
-	return f.Name(), nil
 }
 
 // tmuxSessionExists reports whether tmux already tracks the given session
