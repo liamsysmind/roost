@@ -140,7 +140,7 @@
     if (e.ctrlKey && e.shiftKey && (e.key === 'V' || e.key === 'v')) {
       if (navigator.clipboard && navigator.clipboard.readText) {
         navigator.clipboard.readText().then((t) => {
-          if (t && ws.readyState === WebSocket.OPEN) ws.send(encoder.encode(t));
+          if (t && ws && ws.readyState === WebSocket.OPEN) ws.send(encoder.encode(t));
         }).catch(() => {});
       }
       return false;
@@ -192,40 +192,91 @@
 
   const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsURL = `${wsProto}//${location.host}/ws/terminal/${encodeURIComponent(sessionID)}`;
-  const ws = new WebSocket(wsURL);
-  ws.binaryType = 'arraybuffer';
 
-  ws.onopen = () => {
-    sendResize();
-    term.focus();
-  };
+  // Auto-reconnect: transport-level WS drops are inevitable on long-lived
+  // connections (laptop sleep, WiFi roam, SSH tunnel reconnect, Chrome
+  // freezing background tabs). The tmux backend survives them, so all we
+  // need is to redial. Backoff caps at 30s and we keep trying indefinitely —
+  // the user's machine waking up an hour later should still recover.
+  // The exception is code 1000 with a reason: that's the server saying the
+  // shell exited, so redialing would just spawn a fresh shell out of context.
+  const BACKOFF_MS = [500, 1000, 2000, 4000, 8000, 16000, 30000];
+  let ws = null;
+  let reconnectAttempt = 0;
+  let reconnectTimer = null;
+  let gaveUp = false;
 
-  ws.onmessage = (ev) => {
-    if (typeof ev.data === 'string') {
-      term.writeln(`\r\n\x1b[33m[roost] ${ev.data}\x1b[0m`);
-      return;
+  function connect() {
+    reconnectTimer = null;
+    ws = new WebSocket(wsURL);
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => {
+      if (reconnectAttempt > 0) {
+        term.writeln(`\r\n\x1b[32m[roost] reconnected\x1b[0m`);
+      }
+      reconnectAttempt = 0;
+      sendResize();
+      term.focus();
+    };
+
+    ws.onmessage = (ev) => {
+      if (typeof ev.data === 'string') {
+        term.writeln(`\r\n\x1b[33m[roost] ${ev.data}\x1b[0m`);
+        return;
+      }
+      term.write(new Uint8Array(ev.data));
+    };
+
+    ws.onclose = (ev) => {
+      // Shell-exited is terminal — reconnecting would silently spawn a fresh
+      // shell with no history, which is more confusing than a clear message.
+      if (ev.code === 1000 && ev.reason) {
+        term.writeln(`\r\n\x1b[31m[roost] disconnected: ${ev.reason}\x1b[0m`);
+        gaveUp = true;
+        return;
+      }
+      if (reconnectAttempt === 0) {
+        term.writeln(`\r\n\x1b[33m[roost] disconnected, reconnecting…\x1b[0m`);
+      }
+      scheduleReconnect();
+    };
+
+    ws.onerror = (e) => console.error('ws error', e);
+  }
+
+  function scheduleReconnect() {
+    if (gaveUp || reconnectTimer !== null) return;
+    const delay = BACKOFF_MS[Math.min(reconnectAttempt, BACKOFF_MS.length - 1)];
+    reconnectAttempt++;
+    reconnectTimer = setTimeout(connect, delay);
+  }
+
+  // When the OS reports the network came back, short-circuit whatever backoff
+  // we're sitting on and try immediately. Avoids waiting 30s after a long sleep.
+  window.addEventListener('online', () => {
+    if (gaveUp || ws === null || ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) return;
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
     }
-    term.write(new Uint8Array(ev.data));
-  };
-
-  ws.onclose = (ev) => {
-    term.writeln(`\r\n\x1b[31m[roost] disconnected${ev.reason ? ': ' + ev.reason : ''}\x1b[0m`);
-  };
-
-  ws.onerror = (e) => console.error('ws error', e);
+    connect();
+  });
 
   const encoder = new TextEncoder();
   term.onData((data) => {
-    if (ws.readyState === WebSocket.OPEN) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(encoder.encode(data));
     }
   });
 
   function sendResize() {
-    if (ws.readyState === WebSocket.OPEN) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(`resize ${term.rows} ${term.cols}`);
     }
   }
+
+  connect();
 
   let resizeTimer = null;
   window.addEventListener('resize', () => {
@@ -235,4 +286,10 @@
       sendResize();
     }, 80);
   });
+
+  // Test affordance: call __roostDropWS() from the browser console to
+  // simulate a TCP-level transport drop. Server stays up, cookie stays
+  // valid — exactly the real-world case (WiFi blip, laptop sleep) we
+  // care about. The auto-reconnect path should kick in and recover.
+  window.__roostDropWS = () => { if (ws) ws.close(); };
 })();
