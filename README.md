@@ -328,6 +328,28 @@ Each `roost` runs as its own user, sees only its own home / `tmux` /
 
 ---
 
+## Tailscale access
+
+For phones / iPads / other devices on your tailnet, the cleanest path
+keeps roost on loopback and lets Tailscale do the routing:
+
+```bash
+sudo tailscale serve --bg --https=443 http://localhost:8080
+```
+
+Then open `https://<hostname>.<tailnet>.ts.net` on any tailnet device.
+
+To expose roost on the Tailscale interface directly instead, set
+`addr = "0.0.0.0:8080"` in `~/.config/roost/config.toml` and restart.
+macOS Application Firewall (if enabled) needs to allow incoming
+connections for the `roost` binary; the auth password still gates
+access either way.
+
+A common misread: `lsof -iTCP:8080` shows `IPv6 *:8080` even for an
+`addr = "0.0.0.0:8080"` listener because Go on macOS opens an
+`AF_INET6` socket with `IPV6_V6ONLY=0`. The IPv4 path still works —
+`netstat -anv -p tcp` shows `tcp46` (dual-stack) for the same socket.
+
 ## Public access
 
 For browsers that can't SSH-tunnel (phones, friends' machines), front
@@ -382,7 +404,9 @@ first-class thing you can scroll back to, that's the gap `roost` fills.
   Multi-user accounting belongs in a deployment-layer hub, not in this
   codebase.
 - **Not exposed to the internet by default.** Loopback only. Reach it
-  via SSH tunnel, Tailscale, ZeroTier, WireGuard — your call.
+  from your laptop with an SSH tunnel; from other devices via
+  `tailscale serve` (recommended) or by flipping `addr` to
+  `0.0.0.0:8080` for a peer VPN — your call.
 - **Not an editor.** The file tree is for moving artifacts in and out.
   Edit files with whatever editor you run inside the terminal.
 - **Not a Claude Code clone.** It surfaces what Claude Code (or Codex)

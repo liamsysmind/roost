@@ -58,7 +58,9 @@ Run:
 
 ```
 ./roost serve
-# Listens on 127.0.0.1:8080. Access via SSH tunnel.
+# Listens on 127.0.0.1:8080. Access via SSH tunnel — or set
+# addr = "0.0.0.0:8080" in config.toml (or front with `tailscale serve`)
+# for cross-device access from phones / tablets.
 ```
 
 ## Design philosophy — non-negotiable
@@ -139,7 +141,9 @@ when added), add table-driven tests in the relevant package.
   terminal with whatever editor they brought.
 - **No multi-user.** One password, one user. Reverse-proxy if you need more.
 - **No Svelte / no build step.** Vanilla JS until it stops fitting.
-- **No public-internet listener.** 127.0.0.1 only; SSH tunnel or Tailscale.
+- **No public-internet listener.** Loopback by default. SSH tunnel from a
+  laptop, `tailscale serve` from phones; flip `addr` to `0.0.0.0` only if
+  you intentionally want every interface (LAN included) to see it.
 - **No tmux status bar / prefix key.** Tmux is plumbing, not UI surface.
 
 ## When extending

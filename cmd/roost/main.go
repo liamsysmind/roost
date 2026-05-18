@@ -302,6 +302,7 @@ func runSetup(args []string) {
 	} else {
 		fmt.Printf("Listen address: %s\n", addr)
 	}
+	fmt.Println("For phone / tablet access over Tailscale, see \"Tailscale access\" in the README.")
 	fmt.Println("Run `roost serve` to start.")
 }
 
