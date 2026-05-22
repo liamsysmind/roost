@@ -144,10 +144,14 @@
     `;
   }
 
-  async function refresh() {
+  async function refresh(entriesIn) {
     renderCrumb();
     try {
-      const entries = await listDir(cwd);
+      const entries = entriesIn || await listDir(cwd);
+      lastSig = entriesSignature(entries);
+      // innerHTML wipes scroll position; capture and restore so periodic
+      // auto-refresh ticks don't yank the user back to the top of a long tree.
+      const scrollTop = treeEl.scrollTop;
       treeEl.innerHTML = entries.map(e => nodeHTML(e, 1)).join('');
       bindNodes(treeEl);
       // Re-expand previously open subtrees
@@ -155,6 +159,7 @@
         const holder = treeEl.querySelector(`[data-children-of="${cssEscape(p)}"]`);
         if (holder) await loadChildren(holder, depthOf(p));
       }
+      treeEl.scrollTop = scrollTop;
       setIdleStatus(`${entries.length} item${entries.length === 1 ? '' : 's'}`);
     } catch (e) {
       setStatus(e.message, true);
@@ -773,6 +778,81 @@
     } catch (_) {}
   }
 
+  // --- auto-refresh: catch new/changed files in cwd without a full poll.
+  // Codex / Claude Code write into the same cwd as the shell, so the cwd-sync
+  // path never refires during an agent run. We poll just the cwd listing on a
+  // steady cadence and only touch the DOM when the signature (name + size +
+  // mtime per entry) actually changes, so a quiet tree is one cheap API call
+  // with zero render cost. Limitation: only the cwd listing's signature is
+  // checked. A file written inside a deeply-nested expanded subtree where the
+  // ancestor dir mtimes don't bubble won't trigger a redraw. The 🔄 button
+  // covers that case.
+  const REFRESH_IDLE_MS  = 5000;
+  const REFRESH_AGENT_MS = 2500;
+  let lastSig = '';
+  let autoRefreshTimer = null;
+  let autoRefreshInFlight = false;
+
+  function entriesSignature(entries) {
+    // Sort defensively in case the server ever changes ordering, so
+    // comparing unordered listings still produces stable signatures.
+    return entries
+      .map(e => `${e.is_dir ? 'd' : 'f'}|${e.name}|${e.size}|${e.mtime}`)
+      .sort()
+      .join('\n');
+  }
+
+  function autoRefreshSuppressed() {
+    return document.hidden
+        || autoRefreshInFlight
+        || previewEl.classList.contains('open')
+        || confEl.classList.contains('open')
+        || progEl.classList.contains('active')
+        || dragDepth > 0;
+  }
+
+  async function autoRefreshTick() {
+    if (autoRefreshSuppressed()) return scheduleAutoRefresh();
+    autoRefreshInFlight = true;
+    try {
+      const entries = await listDir(cwd);
+      const sig = entriesSignature(entries);
+      if (sig !== lastSig) await refresh(entries);
+    } catch (_) {
+      // Network blip. Silent; the next tick will retry.
+    } finally {
+      autoRefreshInFlight = false;
+      scheduleAutoRefresh();
+    }
+  }
+
+  function scheduleAutoRefresh() {
+    if (autoRefreshTimer !== null) clearTimeout(autoRefreshTimer);
+    // Speed up while an AI agent is the foreground app. Server's app field
+    // returns "claude" / "codex" (see classifyCommand); anything else gets
+    // the idle cadence.
+    const isAgent = lastAppServer === 'claude' || lastAppServer === 'codex';
+    autoRefreshTimer = setTimeout(autoRefreshTick, isAgent ? REFRESH_AGENT_MS : REFRESH_IDLE_MS);
+  }
+
+  // Refresh immediately when the user returns to the tab, so the tree
+  // reflects whatever ran in the background while they were away.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      if (autoRefreshTimer !== null) clearTimeout(autoRefreshTimer);
+      autoRefreshTick();
+    }
+  });
+
+  // Foreground-app change tightens cadence to "agent" rate immediately
+  // instead of waiting up to REFRESH_IDLE_MS for the next tick to notice.
+  window.addEventListener('roost-pane-app-changed', () => {
+    if (autoRefreshTimer !== null) {
+      clearTimeout(autoRefreshTimer);
+      scheduleAutoRefresh();
+    }
+  });
+
   (async function init() {
     try {
       const r = await fetch('/api/fs/root');
@@ -781,5 +861,6 @@
     await refresh();
     syncCwd();
     setInterval(syncCwd, 2000);
+    scheduleAutoRefresh();
   })();
 })();
