@@ -457,6 +457,20 @@ func (m *Manager) Rename(oldID, newID string) error {
 		return fmt.Errorf("name %q already in use (log file exists)", newID)
 	}
 
+	// Rename the underlying tmux session too. Without this every tmux-keyed
+	// call (PaneInfo / Cwd / killTmuxSession) keeps targeting the old name
+	// and silently misses: display-message in particular returns empty
+	// fields with exit 0, which blanks out the file panel's cwd-sync from
+	// the moment the user hits rename. has-session / rename-session both
+	// honour the "=" exact-match prefix and surface "can't find session" /
+	// "duplicate session" as exit-1 errors, so we can detect mismatches.
+	if m.tmuxSessionExists(oldID) {
+		if err := exec.Command("tmux", "-f", m.tmuxConfPath,
+			"rename-session", "-t", "="+oldID, newID).Run(); err != nil {
+			return fmt.Errorf("rename tmux session: %w", err)
+		}
+	}
+
 	if s, ok := m.sessions[oldID]; ok {
 		// Live session — rename log and re-key the map.
 		if err := os.Rename(s.logPath, newLog); err != nil && !os.IsNotExist(err) {
