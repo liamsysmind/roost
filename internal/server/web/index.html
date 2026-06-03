@@ -7,112 +7,168 @@
   <link rel="stylesheet" href="/vendor/xterm.css">
   <link rel="stylesheet" href="/vendor/highlight-dark.css">
   <style>
-    :root { color-scheme: dark; }
-    html, body { margin: 0; padding: 0; height: 100%; background: #000; color: #eee; overflow: hidden;
-      font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
+    :root {
+      color-scheme: dark;
+      --bar-h: 32px;
+
+      /* Surfaces — near-black with a faint cool tint so the green accent
+         reads as intentional rather than alarmed. Terminal stays pure #000
+         to match the xterm.js theme. */
+      --bg:        #000;
+      --surface:   #0b0d0c;
+      --surface-2: #090a0a;
+      --raised:    #16191a;
+
+      /* Hairlines */
+      --border:        #1c1f20;
+      --border-strong: #2b2f30;
+
+      /* Text tiers */
+      --text:       #e7eae8;
+      --text-2:     #c9ccca;
+      --text-dim:   #9aa6a2;
+      --text-muted: #6c7672;
+      --text-faint: #495250;
+
+      /* Signature green + supporting hues, one disciplined ramp */
+      --accent:        #54b487;
+      --accent-bright: #74e3aa;
+      --accent-dim:    #3c8a66;
+      --accent-soft:   rgba(84,180,135,0.13);
+      --accent-text:   #aee3c8;
+      --amber:         #d8b873;
+      --danger:        #ef8785;
+      --danger-border: #7a3b3b;
+
+      --mono: "JetBrains Mono", "SF Mono", "Fira Code", ui-monospace, Menlo, Consolas, monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+
+      --r-sm: 4px;
+      --r:    6px;
+      --r-lg: 10px;
+      --ease: 0.16s cubic-bezier(0.4, 0, 0.2, 1);
+      --shadow-pop: 0 12px 36px rgba(0,0,0,0.62);
+    }
+    html, body {
+      margin: 0; padding: 0; height: 100%;
+      background: var(--bg); color: var(--text); overflow: hidden;
+      font-family: var(--sans);
+      -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+    }
+    ::selection { background: var(--accent-soft); }
+    :focus-visible { outline: 2px solid var(--accent-dim); outline-offset: 1px; }
     #bar {
-      position: fixed; top: 0; left: 0; right: 0; height: 28px;
-      background: rgba(20,20,20,0.92); border-bottom: 1px solid #2a2a2a;
-      display: flex; align-items: center; padding: 0 0.6rem;
-      font-size: 0.75rem; color: #9aa; user-select: none;
-      backdrop-filter: blur(6px);
+      position: fixed; top: 0; left: 0; right: 0; height: var(--bar-h);
+      background: rgba(11,13,12,0.82); border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 0.5rem; padding: 0 0.7rem;
+      font-size: 0.75rem; color: var(--text-dim); user-select: none;
+      backdrop-filter: blur(12px) saturate(1.3);
+      -webkit-backdrop-filter: blur(12px) saturate(1.3);
       z-index: 10;
     }
-    #bar .left  { flex: 1; display: flex; gap: 0.5rem; align-items: center; }
-    #bar .right { display: flex; gap: 0.4rem; align-items: center; }
-    #bar .tag { font-family: ui-monospace, monospace; color: #6c8; cursor: pointer; }
-    #bar .tag:hover { text-decoration: underline; }
+    #bar .left  { flex: 1; display: flex; gap: 0.6rem; align-items: center; min-width: 0; }
+    #bar .right { display: flex; gap: 0.45rem; align-items: center; }
+    #bar .brand { color: var(--text); font-weight: 600; letter-spacing: 0.02em; text-decoration: none;
+      transition: color var(--ease); }
+    #bar .brand:hover { color: var(--accent-bright); }
+    #bar .tag { font-family: var(--mono); color: var(--accent); cursor: pointer; transition: color var(--ease); }
+    #bar .tag:hover { color: var(--accent-bright); }
     #bar a, #bar button {
-      background: transparent; color: #9aa; border: 1px solid #333;
-      padding: 2px 8px; border-radius: 4px; font-size: 0.72rem; cursor: pointer;
-      text-decoration: none;
+      background: transparent; color: var(--text-dim); border: 1px solid var(--border-strong);
+      padding: 3px 9px; border-radius: var(--r-sm); font-size: 0.72rem; cursor: pointer;
+      text-decoration: none; transition: color var(--ease), border-color var(--ease), background var(--ease);
     }
-    #bar a:hover, #bar button:hover { color: #fff; border-color: #555; }
+    #bar a:hover, #bar button:hover { color: var(--text); border-color: var(--accent-dim); background: var(--accent-soft); }
     #bar .icon-btn {
-      background: transparent; color: #777; border: 1px solid #2a2a2a;
-      padding: 1px 6px; border-radius: 3px; font-size: 0.7rem; cursor: pointer;
-      line-height: 1.1;
+      background: transparent; color: var(--text-muted); border: 1px solid var(--border);
+      padding: 3px 8px; border-radius: var(--r-sm); font-size: 0.7rem; cursor: pointer;
+      line-height: 1.2; transition: color var(--ease), border-color var(--ease), background var(--ease);
     }
-    #bar .icon-btn:hover { color: #fff; border-color: #555; }
+    #bar .icon-btn:hover { color: var(--text); border-color: var(--accent-dim); background: var(--accent-soft); }
 
-    #stage { position: absolute; top: 28px; left: 0; right: 0; bottom: 0; display: flex; }
-    #term { flex: 1; min-width: 200px; background: #000; }
+    #stage { position: absolute; top: var(--bar-h); left: 0; right: 0; bottom: 0; display: flex; }
+    #term { flex: 1; min-width: 200px; background: var(--bg); }
 
     /* Make xterm.js's scrollbar visible in the dark theme. Without these rules
        the default WebKit scrollbar renders as near-invisible grey on black,
        and users can't tell the terminal is scrollable. */
-    .xterm-viewport { scrollbar-width: thin; scrollbar-color: #2a2a2a #0a0a0a; }
+    .xterm-viewport { scrollbar-width: thin; scrollbar-color: var(--border-strong) var(--surface-2); }
     .xterm-viewport::-webkit-scrollbar { width: 10px; }
-    .xterm-viewport::-webkit-scrollbar-track { background: #0a0a0a; }
-    .xterm-viewport::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 5px; }
-    .xterm-viewport::-webkit-scrollbar-thumb:hover { background: #4a4a4a; }
+    .xterm-viewport::-webkit-scrollbar-track { background: var(--surface-2); }
+    .xterm-viewport::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 5px; }
+    .xterm-viewport::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); }
     #drag-handle {
-      width: 4px; background: #161616; cursor: col-resize; flex: 0 0 4px;
-      transition: background 0.1s;
+      width: 5px; background: var(--surface-2); cursor: col-resize; flex: 0 0 5px;
+      transition: background var(--ease);
     }
-    #drag-handle:hover, #drag-handle.dragging { background: #4caf80; }
+    #drag-handle:hover, #drag-handle.dragging { background: var(--accent); }
     #fs { width: 360px; min-width: 220px; max-width: 60%;
-      background: #0e0e0e; border-left: 1px solid #1a1a1a;
+      background: var(--surface); border-left: 1px solid var(--border);
       display: flex; flex-direction: column; overflow: hidden; flex: 0 0 360px;
       position: relative; }
 
     /* Tabs at the top of the right panel */
     #fs-tabs {
-      display: flex; gap: 0.1rem; padding: 0 0.4rem;
-      border-bottom: 1px solid #1c1c1c; background: #0a0a0a;
+      display: flex; gap: 0.15rem; padding: 0 0.5rem;
+      border-bottom: 1px solid var(--border); background: var(--surface-2);
     }
     .ftab {
-      background: transparent; color: #777; border: none;
-      padding: 0.45rem 0.85rem; font-size: 0.74rem; cursor: pointer;
-      border-bottom: 2px solid transparent;
-      margin-bottom: -1px;
+      background: transparent; color: var(--text-muted); border: none;
+      padding: 0.55rem 0.9rem; font-size: 0.74rem; cursor: pointer;
+      border-bottom: 2px solid transparent; margin-bottom: -1px;
+      letter-spacing: 0.01em;
+      transition: color var(--ease), border-color var(--ease);
     }
-    .ftab:hover { color: #ccc; }
-    .ftab.active { color: #cfe; border-bottom-color: #4caf80; }
+    .ftab:hover { color: var(--text); }
+    .ftab.active { color: var(--accent-text); border-bottom-color: var(--accent); }
     .ftab .badge {
-      display: inline-block; margin-left: 0.35rem; padding: 0 5px;
-      font-size: 0.62rem; background: #1a2a1a; color: #6c8;
-      border-radius: 8px; vertical-align: 1px;
+      display: inline-block; margin-left: 0.4rem; padding: 0 6px;
+      font-size: 0.62rem; background: var(--accent-soft); color: var(--accent);
+      border-radius: 9px; vertical-align: 1px;
     }
 
     .ftab-pane { display: none; flex-direction: column; flex: 1; overflow: hidden; min-height: 0; }
     .ftab-pane.active { display: flex; }
 
     #fhead {
-      display: flex; align-items: center; gap: 0.4rem;
-      padding: 0.5rem 0.7rem; border-bottom: 1px solid #1c1c1c;
-      font-size: 0.72rem; color: #8aa; user-select: none;
+      display: flex; align-items: center; gap: 0.45rem;
+      padding: 0.55rem 0.75rem; border-bottom: 1px solid var(--border);
+      font-size: 0.72rem; color: var(--text-dim); user-select: none;
     }
     #fhead .crumb {
-      flex: 1; font-family: ui-monospace, monospace; color: #5b8;
+      flex: 1; font-family: var(--mono); color: var(--accent);
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    #fhead .crumb span { cursor: pointer; }
-    #fhead .crumb span:hover { color: #7d9; text-decoration: underline; }
+    #fhead .crumb span { cursor: pointer; transition: color var(--ease); }
+    #fhead .crumb span:hover { color: var(--accent-bright); text-decoration: underline; }
     #fhead button {
-      background: transparent; color: #888; border: 1px solid #2a2a2a;
-      padding: 2px 6px; border-radius: 3px; font-size: 0.7rem; cursor: pointer;
+      background: transparent; color: var(--text-muted); border: 1px solid var(--border);
+      padding: 3px 8px; border-radius: var(--r-sm); font-size: 0.7rem; cursor: pointer;
+      transition: color var(--ease), border-color var(--ease), background var(--ease);
     }
-    #fhead button:hover { color: #fff; border-color: #555; }
+    #fhead button:hover { color: var(--text); border-color: var(--accent-dim); background: var(--accent-soft); }
 
-    #ftree { flex: 1; overflow-y: auto; padding: 0.3rem 0; font-size: 0.83rem; }
-    .node { display: flex; align-items: center; padding: 2px 0.4rem 2px 0; cursor: default;
-      gap: 0.25rem; line-height: 1.4; }
-    .node:hover { background: #181818; }
-    .node .chev { width: 14px; text-align: center; color: #555; cursor: pointer; user-select: none;
-      font-size: 0.6rem; }
-    .node .icon { width: 16px; text-align: center; color: #6a8; }
+    #ftree { flex: 1; overflow-y: auto; padding: 0.35rem 0.25rem; font-size: 0.83rem; }
+    .node { display: flex; align-items: center; padding: 3px 0.35rem 3px 0; cursor: default;
+      gap: 0.3rem; line-height: 1.45; border-radius: var(--r-sm);
+      transition: background var(--ease); }
+    .node:hover { background: var(--raised); }
+    .node .chev { width: 14px; text-align: center; color: var(--text-faint); cursor: pointer; user-select: none;
+      font-size: 0.6rem; transition: color var(--ease); }
+    .node:hover .chev { color: var(--text-muted); }
+    .node .icon { width: 16px; text-align: center; color: var(--accent-dim); }
     .node .name { flex: 1; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .node.file .name { color: #c9c9c9; }
-    .node.dir .name { color: #6b8; font-weight: 500; }
-    .node .actions { display: none; gap: 0.2rem; padding-right: 0.3rem; }
+    .node.file .name { color: var(--text-2); }
+    .node.dir .name { color: var(--accent); font-weight: 500; }
+    .node .actions { display: none; gap: 0.25rem; padding-right: 0.3rem; }
     .node:hover .actions { display: flex; }
     .node .act {
-      background: transparent; color: #777; border: 1px solid #2a2a2a;
-      padding: 1px 5px; border-radius: 3px; font-size: 0.65rem; cursor: pointer;
+      background: transparent; color: var(--text-muted); border: 1px solid var(--border);
+      padding: 2px 6px; border-radius: var(--r-sm); font-size: 0.65rem; cursor: pointer;
+      transition: color var(--ease), border-color var(--ease);
     }
-    .node .act:hover { color: #fff; border-color: #555; }
-    .node .act.del:hover { color: #f88; border-color: #844; }
+    .node .act:hover { color: var(--text); border-color: var(--accent-dim); }
+    .node .act.del:hover { color: var(--danger); border-color: var(--danger-border); }
 
     .children { display: none; }
     .children.open { display: block; }
@@ -123,15 +179,16 @@
     #fdrop {
       position: absolute; inset: 0; display: none;
       align-items: center; justify-content: center;
-      background: rgba(76,175,128,0.18); border: 2px dashed #4caf80;
-      color: #cfe; font-weight: 600; pointer-events: none;
-      z-index: 5;
+      background: rgba(84,180,135,0.16); border: 2px dashed var(--accent);
+      color: var(--accent-text); font-weight: 600; pointer-events: none;
+      z-index: 5; backdrop-filter: blur(2px);
     }
     #fs.dragging-over #fdrop { display: flex; }
 
-    #fstatus { padding: 0.3rem 0.7rem; font-size: 0.7rem; color: #666;
-      border-top: 1px solid #1c1c1c; min-height: 1.2em; }
-    #fstatus.err { color: #f88; }
+    #fstatus { padding: 0.4rem 0.75rem; font-size: 0.7rem; color: var(--text-muted);
+      border-top: 1px solid var(--border); min-height: 1.2em;
+      font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #fstatus.err { color: var(--danger); }
 
     #fprogress {
       display: none; padding: 0.45rem 0.7rem;
@@ -143,7 +200,7 @@
     #fprogress .label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #fprogress .meta { color: #6a8; font-family: ui-monospace, monospace; white-space: nowrap; }
     #fprogress .bar { background: #1a1a1a; height: 5px; border-radius: 3px; overflow: hidden; }
-    #fprogress .fill { background: linear-gradient(90deg, #4caf80, #5cbf90); height: 100%; width: 0%; transition: width 0.1s linear; }
+    #fprogress .fill { background: linear-gradient(90deg, var(--accent-dim), var(--accent-bright)); height: 100%; width: 0%; transition: width 0.1s linear; }
     #fprogress .cancel {
       background: transparent; color: #9aa; border: 1px solid #333;
       padding: 0 6px; border-radius: 3px; font-size: 0.7rem; cursor: pointer;
@@ -203,9 +260,9 @@
       padding: 5px 14px; border-radius: 4px; font-size: 0.78rem; cursor: pointer;
       font-family: inherit;
     }
-    #fconfirm .foot .ok { color: #cdb; border-color: #4caf80; }
-    #fconfirm .foot .ok:hover { color: #fff; background: #1a2a22; }
-    #fconfirm .foot .cancel:hover { color: #f88; border-color: #844; }
+    #fconfirm .foot .ok { color: var(--accent-text); border-color: var(--accent-dim); }
+    #fconfirm .foot .ok:hover { color: #fff; background: var(--accent-soft); border-color: var(--accent); }
+    #fconfirm .foot .cancel:hover { color: var(--danger); border-color: var(--danger-border); }
 
     /* preview modal */
     #preview {
@@ -265,11 +322,11 @@
     #preview .prose h2 { font-size: 1.35rem; border-bottom: 1px solid #222; padding-bottom: 0.25rem; margin-top: 1.6rem; }
     #preview .prose h3 { font-size: 1.12rem; margin-top: 1.3rem; }
     #preview .prose h4, .prose h5, .prose h6 { margin-top: 1rem; }
-    #preview .prose a { color: #6fb3a8; }
+    #preview .prose a { color: var(--accent-bright); }
     #preview .prose a:hover { text-decoration: underline; }
     #preview .prose code {
-      background: #1a1a1a; padding: 0.1rem 0.35rem; border-radius: 3px;
-      font-family: ui-monospace, monospace; font-size: 0.85em; color: #e0c987;
+      background: var(--raised); padding: 0.1rem 0.35rem; border-radius: var(--r-sm);
+      font-family: var(--mono); font-size: 0.85em; color: var(--amber);
     }
     #preview .prose pre {
       background: #0a0a0a; border: 1px solid #1c1c1c; border-radius: 6px;
@@ -289,48 +346,95 @@
     #preview .prose img { max-width: 100%; height: auto; border-radius: 4px; }
 
     /* AI tab content */
-    #ai-pane { color: #aaa; }
-    #ai-pane .meta { padding: 0.7rem 0.85rem 0.55rem; font-size: 0.74rem; border-bottom: 1px solid #1c1c1c; }
-    #ai-pane .meta > div { display: flex; gap: 0.5rem; margin: 0.18rem 0; }
-    #ai-pane .meta .k { color: #777; min-width: 5.5rem; }
-    #ai-pane .meta .v { color: #cde; font-family: ui-monospace, monospace; word-break: break-all; }
-    #ai-pane .hint { padding: 0.45rem 0.85rem; color: #555; font-size: 0.68rem; border-bottom: 1px solid #1c1c1c; }
+    #ai-pane { color: var(--text-dim); }
+    #ai-pane .meta { padding: 0.75rem 0.85rem 0.6rem; font-size: 0.74rem; border-bottom: 1px solid var(--border); }
+    #ai-pane .meta > div { display: flex; gap: 0.5rem; margin: 0.22rem 0; }
+    #ai-pane .meta .k { color: var(--text-muted); min-width: 5.5rem; }
+    #ai-pane .meta .v { color: var(--accent-text); font-family: var(--mono); word-break: break-all; }
+    #ai-pane .hint { padding: 0.5rem 0.85rem; color: var(--text-faint); font-size: 0.68rem; border-bottom: 1px solid var(--border); }
     #ai-pane .prompts { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; min-height: 0; }
     #ai-pane .prompts li {
-      padding: 0.5rem 0.85rem; border-bottom: 1px solid #161616; cursor: pointer;
-      transition: background 0.1s;
+      padding: 0.55rem 0.85rem; border-bottom: 1px solid var(--surface-2); cursor: pointer;
+      transition: background var(--ease);
     }
-    #ai-pane .prompts li:hover { background: #181818; }
-    #ai-pane .prompts .ts { color: #588; font-size: 0.66rem; font-family: ui-monospace, monospace; display: block; margin-bottom: 0.15rem; }
-    #ai-pane .prompts .preview { color: #cde; font-size: 0.78rem; line-height: 1.35; word-break: break-word; }
-    #ai-pane .empty { padding: 1rem 0.85rem; color: #555; font-size: 0.74rem; text-align: center; }
+    #ai-pane .prompts li:hover { background: var(--raised); }
+    #ai-pane .prompts .ts { color: var(--accent-dim); font-size: 0.66rem; font-family: var(--mono); display: block; margin-bottom: 0.18rem; }
+    #ai-pane .prompts .preview { color: var(--text); font-size: 0.78rem; line-height: 1.4; word-break: break-word; }
+    #ai-pane .empty { padding: 1rem 0.85rem; color: var(--text-faint); font-size: 0.74rem; text-align: center; }
     #ai-pane .prompts.anchor-disabled li { cursor: not-allowed; opacity: 0.55; }
     #ai-pane .prompts.anchor-disabled li:hover { background: transparent; }
     #ai-pane .prompts li.section-head {
-      padding: 0.4rem 0.85rem 0.25rem; color: #6a8; font-size: 0.65rem;
-      letter-spacing: 0.08em; text-transform: uppercase; background: #0a0a0a;
-      border-bottom: 1px solid #1c1c1c; cursor: default;
+      padding: 0.5rem 0.85rem 0.3rem; color: var(--accent); font-size: 0.65rem;
+      letter-spacing: 0.09em; text-transform: uppercase; background: var(--surface-2);
+      border-bottom: 1px solid var(--border); cursor: default;
     }
-    #ai-pane .prompts li.section-head:hover { background: #0a0a0a; }
+    #ai-pane .prompts li.section-head:hover { background: var(--surface-2); }
     #ai-pane .prompts.anchor-disabled li.section-head { opacity: 1; cursor: default; }
     /* Shell commands render compactly: monospace, single line, no timestamp. */
-    #ai-pane .prompts li.shell-cmd { padding: 0.3rem 0.85rem; }
+    #ai-pane .prompts li.shell-cmd { padding: 0.35rem 0.85rem; }
     #ai-pane .prompts li.shell-cmd .preview {
-      font-family: ui-monospace, "JetBrains Mono", Menlo, monospace;
-      font-size: 0.74rem; color: #cde; white-space: nowrap; overflow: hidden;
+      font-family: var(--mono);
+      font-size: 0.74rem; color: var(--text-2); white-space: nowrap; overflow: hidden;
       text-overflow: ellipsis;
+    }
+
+    /* Toggle button for the right panel — only surfaces on narrow screens,
+       where the panel becomes a slide-in drawer (see media query below). */
+    #fs-toggle { display: none; }
+    #fs-backdrop { display: none; }
+
+    /* Narrow screens (phones): the right panel can't co-exist with the
+       terminal at a usable width, so it stops being a flex sibling and
+       becomes a drawer that slides in over the terminal. The terminal then
+       keeps the full stage width; the drag-handle (touch-hostile) is hidden
+       and replaced by the #fs-toggle button in the bar. */
+    @media (max-width: 700px) {
+      #drag-handle { display: none; }
+      #fs-toggle { display: inline-block; }
+      #fs {
+        position: fixed; top: var(--bar-h); right: 0; bottom: 0;
+        width: 86vw; max-width: 380px; min-width: 0; flex: none;
+        border-left: 1px solid var(--border-strong);
+        border-top-left-radius: var(--r-lg);
+        transform: translateX(100%);
+        transition: transform 0.24s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: var(--shadow-pop);
+        z-index: 15;
+      }
+      body.fs-open #fs { transform: translateX(0); }
+      body.fs-open #fs-toggle { color: var(--accent); border-color: var(--accent-dim); background: var(--accent-soft); }
+      #fs-backdrop {
+        display: block; position: fixed; inset: var(--bar-h) 0 0 0; z-index: 14;
+        background: rgba(0,0,0,0.55); backdrop-filter: blur(2px);
+        opacity: 0; pointer-events: none; transition: opacity 0.24s ease;
+      }
+      body.fs-open #fs-backdrop { opacity: 1; pointer-events: auto; }
+    }
+
+    /* Touch devices (no hover): the tree's row actions reveal on :hover, which
+       never fires on a finger — so surface them permanently and widen every
+       control to a comfortable hit target. Keyed on hover capability, not
+       width, so a touchscreen laptop gets the ergonomics without forcing the
+       drawer layout on a wide screen. */
+    @media (hover: none) and (pointer: coarse) {
+      .node { padding-top: 6px; padding-bottom: 6px; }
+      .node .actions { display: flex; }
+      .node .act { padding: 4px 9px; font-size: 0.72rem; }
+      .ftab { padding: 0.7rem 1rem; }
+      #fhead button, #bar .icon-btn, #bar a, #bar button { padding: 6px 11px; }
     }
   </style>
 </head>
 <body>
   <div id="bar">
     <div class="left">
-      <a href="/" title="back to session list" style="color: #9aa; text-decoration: none;">roost</a>
+      <a href="/" class="brand" title="back to session list">roost</a>
       <span id="roost-version" title="roost version" style="color:#7a8a8a;font-family:ui-monospace,monospace;font-size:0.68rem">{{VERSION}}</span>
       <span class="tag" id="session-tag" title="click to copy share URL"></span>
       <button id="session-rename" class="icon-btn" title="rename this session">rename</button>
     </div>
     <div class="right">
+      <button id="fs-toggle" class="icon-btn" title="show / hide files & activity">☰ files</button>
       <span id="ai-model" class="tag" title="Click to open the Activity panel"
             style="color:#8aa;cursor:pointer">—</span>
       <span id="ai-ctx" class="tag" title="Context tokens used on the latest turn"
@@ -344,6 +448,7 @@
   <div id="stage">
     <div id="term"></div>
     <div id="drag-handle"></div>
+    <div id="fs-backdrop"></div>
     <div id="fs">
       <div id="fs-tabs">
         <button class="ftab active" data-tab="files">Files</button>

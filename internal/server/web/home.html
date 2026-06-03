@@ -72,6 +72,13 @@
     .item .act.del:hover { color: #f88; border-color: #844; }
 
     .empty { color: #888; text-align: center; padding: 2rem; border: 1px dashed #2a2a2a; border-radius: 8px; }
+
+    footer.studio {
+      text-align: center; color: #585f5c; font-size: 0.74rem;
+      letter-spacing: 0.03em; padding: 1.5rem 1rem 2.5rem;
+    }
+    footer.studio a { color: #7a8a8a; text-decoration: none; transition: color 0.16s; }
+    footer.studio a:hover { color: #5cbf90; }
   </style>
 </head>
 <body>
@@ -91,6 +98,7 @@
     <ul id="list" class="list"></ul>
     <div id="empty" class="empty" hidden>No sessions yet. Create one above.</div>
   </main>
+  <footer class="studio">a <a href="https://monostudio.app" target="_blank" rel="noopener">monostudio.app</a> project</footer>
   <script src="/toast.js?v={{VERSION}}"></script>
   <script src="/home.js?v={{VERSION}}"></script>
   <script src="/notify.js?v={{VERSION}}"></script>

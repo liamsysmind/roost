@@ -166,6 +166,10 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	body := strings.ReplaceAll(string(b), "{{VERSION}}", s.Version)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// The page carries inline CSS that changes between deploys, so it falls
+	// under the same revalidation rule as our JS/CSS in handleStatic —
+	// otherwise browsers serve a stale layout even after reload.
+	w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 	_, _ = w.Write([]byte(body))
 }
 
@@ -177,6 +181,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	}
 	body := strings.ReplaceAll(string(b), "{{VERSION}}", s.Version)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 	_, _ = w.Write([]byte(body))
 }
 

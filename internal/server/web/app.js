@@ -84,7 +84,13 @@
     fontFamily: 'ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans Mono CJK SC", "Noto Sans CJK SC", "WenQuanYi Micro Hei Mono", monospace',
     fontSize: 14,
     scrollback: 100000,
-    theme: { background: '#000000', foreground: '#e6e6e6' },
+    theme: {
+      background: '#000000',
+      foreground: '#e7eae8',
+      cursor: '#54b487',
+      cursorAccent: '#000000',
+      selectionBackground: 'rgba(84,180,135,0.30)',
+    },
     allowProposedApi: true,
   });
 

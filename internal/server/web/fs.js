@@ -702,6 +702,16 @@
   document.getElementById('fmkdir').addEventListener('click', mkdir);
   document.getElementById('frefresh').addEventListener('click', refresh);
 
+  // --- mobile drawer toggle ---
+  // On narrow screens #fs is a slide-in drawer (see index.html media query).
+  // The toggle button and backdrop just flip a body class; CSS does the rest,
+  // so desktop (where both are display:none) is entirely unaffected.
+  const toggleBtn = document.getElementById('fs-toggle');
+  const backdrop  = document.getElementById('fs-backdrop');
+  const setDrawer = (open) => document.body.classList.toggle('fs-open', open);
+  if (toggleBtn) toggleBtn.addEventListener('click', () => setDrawer(!document.body.classList.contains('fs-open')));
+  if (backdrop)  backdrop.addEventListener('click', () => setDrawer(false));
+
   // --- resize handle ---
   const handle = document.getElementById('drag-handle');
   const stage = document.getElementById('stage');

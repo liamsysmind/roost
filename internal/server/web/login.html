@@ -34,6 +34,12 @@
     }
     button:hover { background: #5cbf90; }
     .err { margin-top: 0.6rem; color: #ef6c6c; font-size: 0.8rem; min-height: 1em; }
+    .studio {
+      display: block; margin-top: 1.4rem; text-align: center;
+      color: #585f5c; font-size: 0.72rem; letter-spacing: 0.04em;
+      text-decoration: none; transition: color 0.16s;
+    }
+    .studio:hover { color: #5cbf90; }
   </style>
 </head>
 <body>
@@ -49,5 +55,6 @@
     <button type="submit">Sign in</button>
     <div class="err">{{ERROR}}</div>
   </form>
+  <a class="studio" href="https://monostudio.app" target="_blank" rel="noopener">monostudio.app</a>
 </body>
 </html>
