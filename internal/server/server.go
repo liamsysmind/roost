@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/liamsysmind/roost/internal/ai"
@@ -32,6 +33,8 @@ type Server struct {
 	IdleAlertAfter time.Duration
 	handler        http.Handler
 	static         fs.FS
+	aiReader       *ai.Reader
+	aiCodex        *ai.CodexReader
 }
 
 func New(a *auth.Manager, sm *session.Manager, fsAPI *rfs.API, n *notify.Notifier, hookSecret, addr, version string, idleAlertAfter time.Duration) *Server {
@@ -41,6 +44,8 @@ func New(a *auth.Manager, sm *session.Manager, fsAPI *rfs.API, n *notify.Notifie
 		HookSecret: hookSecret, Addr: addr, Version: version,
 		IdleAlertAfter: idleAlertAfter,
 		static:         static,
+		aiReader:       ai.NewReader(),
+		aiCodex:        ai.NewCodexReader(),
 	}
 	s.setupRoutes()
 	return s
@@ -59,20 +64,23 @@ func (s *Server) setupRoutes() {
 	mux.HandleFunc("GET /notify-worker.js", s.handleStatic)
 	mux.HandleFunc("GET /toast.js", s.handleStatic)
 	mux.HandleFunc("GET /ai.js", s.handleStatic)
+	mux.HandleFunc("GET /sessions.js", s.handleStatic)
 
 	wsh := &session.Handler{Manager: s.Sessions}
 	mux.HandleFunc("GET /ws/terminal", wsh.Serve)
 	mux.HandleFunc("GET /ws/terminal/{id}", wsh.Serve)
 
 	mux.HandleFunc("GET /api/sessions", s.handleSessionsList)
+	mux.HandleFunc("GET /api/sessions/status", s.handleSessionsStatus)
 	mux.HandleFunc("GET /api/sessions/{id}/cwd", s.handleSessionCwd)
 	mux.HandleFunc("POST /api/sessions/{id}/rename", s.handleSessionRename)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleSessionDelete)
 
+
 	(&rfs.Handler{API: s.FS}).Mount(mux)
 	(&ai.Handler{
-		Reader:      ai.NewReader(),
-		CodexReader: ai.NewCodexReader(),
+		Reader:      s.aiReader,
+		CodexReader: s.aiCodex,
 		CwdForSession: func(sid string) string {
 			c, _ := s.Sessions.Cwd(sid)
 			return c
@@ -231,6 +239,71 @@ func (s *Server) handleSessionCwd(w http.ResponseWriter, r *http.Request) {
 		"command": cmd,
 		"app":     app,
 	})
+}
+
+// SessionStatus is one row in the Sessions tab. It flattens the session.Info
+// snapshot together with the live tmux pane info and (for agent sessions) the
+// AI reader's view of the active conversation.
+type SessionStatus struct {
+	session.Info
+	Cwd           string `json:"cwd,omitempty"`
+	Cmd           string `json:"cmd,omitempty"`
+	App           string `json:"app,omitempty"`
+	Model         string `json:"model,omitempty"`
+	ContextTokens int64  `json:"context_tokens,omitempty"`
+	InputTokens   int64  `json:"input_tokens,omitempty"`
+	OutputTokens  int64  `json:"output_tokens,omitempty"`
+}
+
+// handleSessionsStatus returns one SessionStatus per session known to the
+// manager. PaneInfo and the AI reader are queried in parallel because each
+// PaneInfo call forks a tmux process and the AI lookup walks a JSONL file;
+// serial would push the 5s poll budget past comfort once there are a handful
+// of sessions.
+func (s *Server) handleSessionsStatus(w http.ResponseWriter, r *http.Request) {
+	list := s.Sessions.List()
+	out := make([]SessionStatus, len(list))
+	var wg sync.WaitGroup
+	for i, info := range list {
+		out[i].Info = info
+		if info.Closed {
+			continue
+		}
+		wg.Add(1)
+		go func(i int, id string) {
+			defer wg.Done()
+			cwd, cmd, app, err := s.Sessions.PaneInfo(id)
+			if err != nil {
+				return
+			}
+			out[i].Cwd = cwd
+			out[i].Cmd = cmd
+			out[i].App = app
+			if cwd == "" {
+				return
+			}
+			var active *ai.ActiveSession
+			switch app {
+			case "claude":
+				if s.aiReader != nil {
+					active, _ = s.aiReader.Active(cwd)
+				}
+			case "codex":
+				if s.aiCodex != nil {
+					active, _ = s.aiCodex.Active(cwd)
+				}
+			}
+			if active != nil {
+				out[i].Model = active.Model
+				out[i].ContextTokens = active.ContextTokens
+				out[i].InputTokens = active.Usage.InputTokens
+				out[i].OutputTokens = active.Usage.OutputTokens
+			}
+		}(i, info.ID)
+	}
+	wg.Wait()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
 }
 
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {

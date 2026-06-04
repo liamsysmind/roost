@@ -408,6 +408,50 @@
       text-overflow: ellipsis;
     }
 
+    /* Sessions tab: one row per session. Status dot at the left signals
+       which agent (if any) is foreground; clicking a row navigates the
+       page to that session. The current session is highlighted so it's
+       easy to spot in a long list. */
+    #sessions-pane .hint { padding: 0.5rem 0.85rem; color: var(--text-faint); font-size: 0.72rem; border-bottom: 1px solid var(--border); }
+    #sessions-pane .sessions-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; min-height: 0; }
+    #sessions-pane .sessions-list li {
+      padding: 0.7rem 0.95rem; border-bottom: 1px solid var(--border);
+      cursor: pointer; display: flex; flex-direction: column; gap: 0.3rem;
+    }
+    #sessions-pane .sessions-list li:hover { background: var(--raised); }
+    #sessions-pane .sessions-list li.current { background: var(--accent-soft); }
+    #sessions-pane .sessions-list li.current:hover { background: var(--accent-soft); }
+    #sessions-pane .row1 { display: flex; align-items: center; gap: 0.45rem; font-size: 0.92rem; color: var(--text); }
+    #sessions-pane .dot {
+      display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+      background: var(--text-faint); flex-shrink: 0;
+    }
+    #sessions-pane .dot.claude { background: var(--accent-bright); }
+    #sessions-pane .dot.codex  { background: #8aa6f0; }
+    #sessions-pane .dot.shell  { background: var(--text-muted); }
+    #sessions-pane .dot.closed { background: var(--danger); opacity: 0.5; }
+    #sessions-pane .sid { font-family: var(--mono); font-weight: 600; color: var(--text); }
+    #sessions-pane .app-tag {
+      font-family: var(--mono); font-size: 0.72rem; color: var(--text);
+      background: var(--surface-2); border: 1px solid var(--border-strong);
+      padding: 1px 7px; border-radius: 3px;
+    }
+    #sessions-pane .age { color: var(--text-dim); font-size: 0.72rem; margin-left: auto; flex-shrink: 0; }
+    #sessions-pane .row2 {
+      font-family: var(--mono); font-size: 0.82rem; color: var(--text-2);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl;
+    }
+    #sessions-pane .row2 span { direction: ltr; unicode-bidi: embed; }
+    #sessions-pane .row3 {
+      display: flex; flex-wrap: wrap; gap: 0.4rem 0.8rem; font-size: 0.78rem;
+      color: var(--text-2); font-family: var(--mono);
+    }
+    #sessions-pane .row3 .lbl { color: var(--text-faint); }
+    #sessions-pane .empty {
+      padding: 1.5rem 1rem; text-align: center; color: var(--text-dim);
+      font-size: 0.85rem;
+    }
+
     /* Toggle button for the right panel — only surfaces on narrow screens,
        where the panel becomes a slide-in drawer (see media query below). */
     #fs-toggle { display: none; }
@@ -483,6 +527,7 @@
       <div id="fs-tabs">
         <button class="ftab active" data-tab="files">Files</button>
         <button class="ftab" data-tab="ai">Activity <span id="ai-tab-badge" class="badge" hidden></span></button>
+        <button class="ftab" data-tab="sessions">Sessions <span id="sessions-tab-badge" class="badge" hidden></span></button>
       </div>
       <div id="files-pane" class="ftab-pane active">
         <div id="fhead">
@@ -511,6 +556,10 @@
         </div>
         <div class="hint">click a prompt to scroll the terminal back to it</div>
         <ul class="prompts" id="ai-prompts"></ul>
+      </div>
+      <div id="sessions-pane" class="ftab-pane">
+        <div class="hint">click a row to switch session</div>
+        <ul class="sessions-list" id="sessions-list"></ul>
       </div>
       <div id="fdrop"><span id="fdrop-text">drop to upload here</span></div>
     </div>
@@ -552,6 +601,7 @@
   <script src="/app.js?v={{VERSION}}"></script>
   <script src="/fs.js?v={{VERSION}}"></script>
   <script src="/ai.js?v={{VERSION}}"></script>
+  <script src="/sessions.js?v={{VERSION}}"></script>
   <script src="/notify.js?v={{VERSION}}"></script>
 </body>
 </html>
