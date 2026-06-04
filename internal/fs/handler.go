@@ -28,6 +28,7 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/fs/rename", h.handleRename)
 	mux.HandleFunc("DELETE /api/fs/remove", h.handleRemove)
 	mux.HandleFunc("GET /api/fs/root", h.handleRoot)
+	mux.HandleFunc("POST /api/fs/exist", h.handleExist)
 }
 
 func (h *Handler) handleRoot(w http.ResponseWriter, r *http.Request) {
@@ -269,6 +270,29 @@ func (h *Handler) handleRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleExist takes { cwd: string, paths: [string] } and returns
+// { results: [{ input, rel, exists }] }. Used by the terminal-link provider
+// to validate path-shaped tokens before decorating them as clickable, so an
+// agent quoting a hypothetical path doesn't render as a dead link.
+func (h *Handler) handleExist(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Cwd   string   `json:"cwd"`
+		Paths []string `json:"paths"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	const maxPaths = 256
+	if len(req.Paths) > maxPaths {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("too many paths: %d (max %d)", len(req.Paths), maxPaths))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"results": h.API.BatchExist(req.Cwd, req.Paths),
+	})
 }
 
 func writeJSON(w http.ResponseWriter, code int, body any) {

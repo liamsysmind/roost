@@ -378,8 +378,12 @@
       const r = await fetch(url, { method: 'HEAD' });
       if (!r.ok) {
         const t = await r.text();
+        // Server's writeError emits {"error": "..."}; pull the field out so
+        // the user sees a readable sentence instead of a JSON blob.
+        let msg = t.trim();
+        try { const j = JSON.parse(t); if (j && j.error) msg = j.error; } catch (_) {}
         pvBodyEl.innerHTML = '<div class="msg err"></div>';
-        pvBodyEl.querySelector('.msg').textContent = t.trim() || r.statusText;
+        pvBodyEl.querySelector('.msg').textContent = msg || r.statusText;
         return;
       }
       ct = r.headers.get('Content-Type') || '';
@@ -435,8 +439,19 @@
             });
           }
         } else {
-          pvBodyEl.innerHTML = '<pre><code></code></pre>';
+          // Build a line-number gutter from the raw text and render the code
+          // alongside it. Files conventionally end with a trailing newline; the
+          // resulting empty final split element isn't a real line, so drop it
+          // before counting.
+          const lines = txt.split('\n');
+          const lineCount = (lines.length > 0 && lines[lines.length - 1] === '')
+            ? lines.length - 1
+            : lines.length;
+          const gutterText = Array.from({ length: lineCount || 1 }, (_, i) => i + 1).join('\n');
+          pvBodyEl.innerHTML = '<div class="codeview"><div class="ln-gutter"></div><pre><code></code></pre></div>';
+          const gutterEl = pvBodyEl.querySelector('.ln-gutter');
           const code = pvBodyEl.querySelector('code');
+          gutterEl.textContent = gutterText;
           code.textContent = txt;
           if (window.hljs) {
             const lang = extToLang(name);
@@ -861,6 +876,57 @@
       clearTimeout(autoRefreshTimer);
       scheduleAutoRefresh();
     }
+  });
+
+  // Clickable terminal paths dispatch this from app.js. We resolve the path
+  // to an fs-root-relative one and open the preview modal. Tilde paths assume
+  // the user's home equals the fs root (default config); the ~user/ form is
+  // not handled because we can't resolve it client-side without guessing.
+  function normalizePath(p) {
+    const out = [];
+    for (const seg of p.split('/')) {
+      if (seg === '' || seg === '.') continue;
+      if (seg === '..') { out.pop(); continue; }
+      out.push(seg);
+    }
+    return '/' + out.join('/');
+  }
+
+  window.addEventListener('roost-open-preview', (e) => {
+    const detail = e.detail || {};
+    // Fast path: link provider already validated and resolved via the
+    // /api/fs/exist endpoint, so we just open what it pre-resolved.
+    if (detail.rel) {
+      openPreview(detail.rel);
+      return;
+    }
+    // Fallback for any caller that hasn't pre-resolved. Keeps the listener
+    // usable from console / scripts and as graceful degradation if the
+    // validation request failed.
+    const path = detail.path;
+    if (!path) return;
+    let abs;
+    if (path.startsWith('/')) {
+      abs = path;
+    } else if (path.startsWith('~/')) {
+      abs = rootAbs.replace(/\/+$/, '') + '/' + path.slice(2);
+    } else if (path.startsWith('~')) {
+      return;
+    } else {
+      const base = detail.cwd || lastCwdServer;
+      if (!base) {
+        window.toast && window.toast('no session cwd yet, try again in a moment', 'err');
+        return;
+      }
+      abs = base.replace(/\/+$/, '') + '/' + path;
+    }
+    abs = normalizePath(abs);
+    const rel = relToRoot(abs);
+    if (rel === null) {
+      window.toast && window.toast('outside file panel root: ' + abs, 'err');
+      return;
+    }
+    openPreview(rel);
   });
 
   (async function init() {

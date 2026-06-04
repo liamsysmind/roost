@@ -225,6 +225,65 @@ func (a *API) Rename(from, to string) error {
 	return os.Rename(fromAbs, toAbs)
 }
 
+// ExistResult is one entry returned by BatchExist.
+type ExistResult struct {
+	Input  string `json:"input"`
+	Rel    string `json:"rel,omitempty"`
+	Exists bool   `json:"exists"`
+}
+
+// BatchExist resolves each input to a path under Root and reports whether
+// it points to a regular file. Inputs may be absolute (/...), home-relative
+// (~/...), or relative to cwdAbs. The ~user form is rejected because we
+// cannot resolve other users' homes safely. Used by the terminal-link
+// provider in app.js to skip decorating path-shaped tokens that don't
+// correspond to real files (e.g. an agent quoting a hypothetical example).
+func (a *API) BatchExist(cwdAbs string, inputs []string) []ExistResult {
+	out := make([]ExistResult, len(inputs))
+	home := os.Getenv("HOME")
+	for i, in := range inputs {
+		out[i].Input = in
+		if in == "" {
+			continue
+		}
+		var abs string
+		switch {
+		case strings.HasPrefix(in, "/"):
+			abs = filepath.Clean(in)
+		case strings.HasPrefix(in, "~/") && home != "":
+			abs = filepath.Clean(filepath.Join(home, in[2:]))
+		case strings.HasPrefix(in, "~"):
+			continue
+		default:
+			if cwdAbs == "" {
+				continue
+			}
+			abs = filepath.Clean(filepath.Join(cwdAbs, in))
+		}
+		rel, err := filepath.Rel(a.Root, abs)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		if rel == "." {
+			continue
+		}
+		// Reuse resolve() for symlink-safe abs path. It also re-enforces
+		// containment after EvalSymlinks, so a symlink inside Root pointing
+		// elsewhere won't sneak through.
+		resolved, err := a.resolve(rel)
+		if err != nil {
+			continue
+		}
+		info, err := os.Stat(resolved)
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		out[i].Rel = filepath.ToSlash(rel)
+		out[i].Exists = true
+	}
+	return out
+}
+
 // resolve turns a Root-relative path into an absolute one whose realpath is
 // contained within Root. Symlinks at every component (including the leaf if
 // it exists) are followed before the containment check, so a symlink inside

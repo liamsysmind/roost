@@ -196,6 +196,89 @@
     e.preventDefault();
   }, { passive: false, capture: true });
 
+  // --- clickable file paths in terminal output ---
+  // xterm.js's link provider runs per visible buffer line. We match path-like
+  // tokens and dispatch a custom event to fs.js, which owns the preview modal.
+  // The cross-IIFE handoff via window event avoids exposing internal modal
+  // functions on the global object.
+  //
+  // Regex matches three shapes, optionally followed by :LINE or :LINE:COL:
+  //   /abs/path/file.ext
+  //   ./rel/file.ext or ../rel/file.ext or ~/rel/file.ext
+  //   bare/relative/file.ext (requires at least one '/' to dodge false
+  //                            positives like version strings)
+  // Bare filenames with no '/' are skipped intentionally; agent output is
+  // noisy enough that whitelisting "looks like a real path" is the safer
+  // default. The lookbehind blocks matches inside URLs (chars before would
+  // be ':' or '/') and inside longer paths.
+  const FILE_PATH_RE = /(?<![\w./:])((?:\.{1,2}|~)?\/[\w.~-]+(?:\/[\w.~-]+)*|[\w.~-]+(?:\/[\w.~-]+)+)(?::(\d+)(?::(\d+))?)?/g;
+
+  // Cache the terminal session's cwd; fs.js dispatches this on every change.
+  // Required for resolving relative paths at click time.
+  let lastTerminalCwd = '';
+  window.addEventListener('roost-cwd-changed', (e) => {
+    lastTerminalCwd = (e.detail && e.detail.current) || '';
+  });
+
+  // Walk a buffer line's cells once and build a JS-char-index to 1-based
+  // xterm column lookup. Wide chars (CJK, emoji) occupy two cells but one
+  // char in translateToString output, so without this map the link
+  // decoration drifts left by the count of preceding wide chars and ends
+  // early. The trailing sentinel covers "position immediately past the
+  // last char" for computing the inclusive end column.
+  function buildColMap(line) {
+    const map = [];
+    let col = 1;
+    for (let i = 0; i < line.length; i++) {
+      const cell = line.getCell(i);
+      if (!cell) break;
+      const w = cell.getWidth();
+      if (w === 0) continue;            // spacer following a wide char
+      const text = cell.getChars();
+      const repeat = text.length || 1;  // empty cells render as ' '
+      for (let j = 0; j < repeat; j++) map.push(col);
+      col += w;
+    }
+    map.push(col);
+    return map;
+  }
+
+  term.registerLinkProvider({
+    provideLinks(lineNumber, callback) {
+      const line = term.buffer.active.getLine(lineNumber - 1);
+      if (!line) return callback(undefined);
+      const text = line.translateToString(true);
+      if (!text || text.indexOf('/') < 0) return callback(undefined);
+      const colMap = buildColMap(line);
+      const links = [];
+      FILE_PATH_RE.lastIndex = 0;
+      let m;
+      while ((m = FILE_PATH_RE.exec(text)) !== null) {
+        const path = m[1];
+        const lineHint = m[2] ? parseInt(m[2], 10) : null;
+        const colHint  = m[3] ? parseInt(m[3], 10) : null;
+        const startIdx = m.index;
+        const endIdx   = m.index + m[0].length;
+        const startCol = colMap[startIdx] || (startIdx + 1);
+        const endCol   = (colMap[endIdx] || (endIdx + 1)) - 1;  // inclusive
+        links.push({
+          text: m[0],
+          range: {
+            start: { x: startCol, y: lineNumber },
+            end:   { x: endCol,   y: lineNumber },
+          },
+          decorations: { pointerCursor: true, underline: true },
+          activate: () => {
+            window.dispatchEvent(new CustomEvent('roost-open-preview', {
+              detail: { path, line: lineHint, col: colHint, cwd: lastTerminalCwd },
+            }));
+          },
+        });
+      }
+      callback(links.length ? links : undefined);
+    },
+  });
+
   const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsURL = `${wsProto}//${location.host}/ws/terminal/${encodeURIComponent(sessionID)}`;
 
