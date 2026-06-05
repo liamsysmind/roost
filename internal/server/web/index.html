@@ -465,12 +465,27 @@
        and replaced by the #fs-toggle button in the bar. */
     @media (max-width: 700px) {
       #drag-handle { display: none; }
-      #fs-toggle { display: inline-block; }
-      /* Keep the bar from overflowing the viewport: the right cluster (which
-         holds the only way to reach files/activity on mobile) must never be
-         pushed off-screen, so it can't shrink — instead the long session tag
-         on the left truncates. Without this a long session id clips the
-         #fs-toggle button right off the edge (body is overflow:hidden). */
+      /* The files/activity toggle leaves the crowded bar for a handle pinned
+         to the right edge (vertically centred), so it can't get buried among
+         the status tags. The drawer covers it when open; the backdrop closes
+         it. We also drop the two lowest-value bar items on mobile — the
+         version string and the "+ new" link (new sessions live in the Sessions
+         tab / home now) — to de-clutter what's left. */
+      #fs-toggle {
+        display: flex; align-items: center; justify-content: center;
+        position: fixed; right: 0; top: 50%; transform: translateY(-50%);
+        z-index: 13; width: 34px; height: 52px; padding: 0;
+        font-size: 1.05rem; line-height: 1; color: var(--accent-text);
+        background: rgba(11,13,12,0.92);
+        border: 1px solid var(--border-strong); border-right: none;
+        border-radius: var(--r) 0 0 var(--r);
+        box-shadow: -4px 0 16px rgba(0,0,0,0.45);
+        backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+      }
+      #fs-toggle:active { background: var(--accent-soft); }
+      #bar #roost-version { display: none; }
+      #bar .right a { display: none; } /* the "+ new" link */
+      /* Long session ids still truncate rather than push the bar wide. */
       #bar { gap: 0.4rem; padding: 0 0.5rem; }
       #bar .right { flex-shrink: 0; }
       #bar .left > * { flex-shrink: 0; }
@@ -489,7 +504,7 @@
         z-index: 15;
       }
       body.fs-open #fs { transform: translateX(0); }
-      body.fs-open #fs-toggle { color: var(--accent); border-color: var(--accent-dim); background: var(--accent-soft); }
+      body.fs-open #fs-toggle { display: none; } /* drawer covers it; tap the backdrop to close */
       #fs-backdrop {
         display: block; position: fixed; inset: var(--bar-h) 0 0 0; z-index: 14;
         background: rgba(0,0,0,0.55); backdrop-filter: blur(2px);
@@ -568,7 +583,7 @@
       <button id="session-rename" class="icon-btn" title="rename this session">rename</button>
     </div>
     <div class="right">
-      <button id="fs-toggle" class="icon-btn" title="show / hide files & activity">☰ files</button>
+      <button id="fs-toggle" class="icon-btn" title="show / hide files & activity">☰</button>
       <span id="ai-model" class="tag" title="Click to open the Activity panel"
             style="color:#8aa;cursor:pointer">—</span>
       <span id="ai-ctx" class="tag" title="Context tokens used on the latest turn"
