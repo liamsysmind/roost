@@ -293,6 +293,111 @@
     }, 80);
   });
 
+  function sendPty(data) {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(encoder.encode(data));
+  }
+
+  // Mobile input bar — see index.html. Composing a whole command in a real
+  // <input> sidesteps two xterm-on-mobile problems: the soft keyboard covering
+  // the prompt, and iOS dictation duplicating characters through xterm's hidden
+  // textarea. Submit sends the text plus Enter; the key chips send raw control
+  // sequences the on-screen keyboard can't produce.
+  const composeEl    = document.getElementById('compose');
+  const composeInput = document.getElementById('compose-input');
+  const KEYSEQ = {
+    esc: '\x1b', tab: '\t', 'ctrl-c': '\x03',
+    up: '\x1b[A', down: '\x1b[B', left: '\x1b[D', right: '\x1b[C',
+  };
+  if (composeEl) {
+    composeEl.addEventListener('submit', (e) => {
+      e.preventDefault();
+      sendPty(composeInput.value + '\r');
+      composeInput.value = '';
+      composeInput.focus(); // keep the keyboard up for the next command
+    });
+    composeEl.querySelectorAll('.ckey').forEach((b) => {
+      b.addEventListener('click', () => {
+        const seq = KEYSEQ[b.dataset.key];
+        if (seq) sendPty(seq);
+        composeInput.focus();
+      });
+    });
+  }
+
+  // Voice input via the Web Speech API rather than the keyboard's dictation
+  // key. iOS Safari's built-in dictation has an OS-level bug that re-inserts
+  // the previous phrase into a web <input> on every committed chunk (the URL
+  // bar is the lone exception). We can't disable that key, but we can offer an
+  // alternative that bypasses it entirely: we receive recognition results in JS
+  // and write the field ourselves, so nothing doubles. Hidden when the browser
+  // has no Speech API (e.g. desktop Firefox) — typing still works everywhere.
+  const micBtn = document.getElementById('compose-mic');
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (micBtn && SR) {
+    micBtn.hidden = false;
+    const recog = new SR();
+    recog.continuous = true;
+    recog.interimResults = true;
+    recog.lang = navigator.language || 'en-US';
+    let recognizing = false, srBase = '', srFinal = '';
+    recog.onresult = (e) => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const tr = e.results[i][0].transcript;
+        if (e.results[i].isFinal) srFinal += tr; else interim += tr;
+      }
+      composeInput.value = srBase + srFinal + interim;
+    };
+    const stop = () => { recognizing = false; micBtn.classList.remove('rec'); };
+    recog.onend = stop;
+    recog.onerror = stop;
+    micBtn.addEventListener('click', () => {
+      if (recognizing) { recog.stop(); return; }
+      srBase = composeInput.value ? composeInput.value.replace(/\s*$/, '') + ' ' : '';
+      srFinal = '';
+      try {
+        recog.start();
+        recognizing = true;
+        micBtn.classList.add('rec');
+        composeInput.focus();
+      } catch (_) { stop(); }
+    });
+  }
+
+  // Keep the terminal sized to the visible area, above both the on-screen
+  // keyboard and the mobile input bar. The layout viewport stays full-height
+  // when the keyboard opens, but visualViewport shrinks — so without this the
+  // prompt hides behind the keyboard. We lift #stage by (keyboard overlap +
+  // compose-bar height) and float the compose bar just above the keyboard.
+  const stageEl = document.getElementById('stage');
+  const vv = window.visualViewport;
+  let vvTimer = null;
+  let lastOverlap = -1;
+  // Reposition the compose bar / terminal for the visible area — but only on a
+  // real keyboard open/close, never on the sub-pixel jitter iOS emits while
+  // dictating. Each DOM write near the focused field during dictation corrupts
+  // its range tracking and makes it re-insert the previous phrase (the URL bar,
+  // which has no surrounding layout churn, never doubles — same reason). So we
+  // listen to `resize` only (not the noisy `scroll`) and freeze once the
+  // keyboard is up: a delta under 24px is treated as jitter and ignored.
+  function layoutForViewport(force) {
+    const overlap = vv ? Math.max(0, window.innerHeight - vv.height - vv.offsetTop) : 0;
+    if (!force && Math.abs(overlap - lastOverlap) < 24) return;
+    lastOverlap = overlap;
+    const composeH = composeEl ? composeEl.offsetHeight : 0; // 0 when hidden (desktop)
+    if (composeEl) composeEl.style.bottom = overlap + 'px';
+    stageEl.style.bottom = (overlap + composeH) + 'px';
+    clearTimeout(vvTimer);
+    vvTimer = setTimeout(() => {
+      fit.fit();
+      sendResize();
+      term.scrollToBottom();
+    }, 80);
+  }
+  if (vv) vv.addEventListener('resize', () => layoutForViewport(false));
+  window.addEventListener('orientationchange', () => setTimeout(() => layoutForViewport(true), 250));
+  layoutForViewport(true); // initial: positions the compose bar / insets the stage
+
   // Test affordance: call __roostDropWS() from the browser console to
   // simulate a TCP-level transport drop. Server stays up, cookie stays
   // valid — exactly the real-world case (WiFi blip, laptop sleep) we

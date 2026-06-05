@@ -382,6 +382,7 @@
        where the panel becomes a slide-in drawer (see media query below). */
     #fs-toggle { display: none; }
     #fs-backdrop { display: none; }
+    #compose { display: none; }
 
     /* Narrow screens (phones): the right panel can't co-exist with the
        terminal at a usable width, so it stops being a flex sibling and
@@ -391,6 +392,18 @@
     @media (max-width: 700px) {
       #drag-handle { display: none; }
       #fs-toggle { display: inline-block; }
+      /* Keep the bar from overflowing the viewport: the right cluster (which
+         holds the only way to reach files/activity on mobile) must never be
+         pushed off-screen, so it can't shrink — instead the long session tag
+         on the left truncates. Without this a long session id clips the
+         #fs-toggle button right off the edge (body is overflow:hidden). */
+      #bar { gap: 0.4rem; padding: 0 0.5rem; }
+      #bar .right { flex-shrink: 0; }
+      #bar .left > * { flex-shrink: 0; }
+      #bar #session-tag {
+        flex-shrink: 1; min-width: 0; overflow: hidden;
+        text-overflow: ellipsis; white-space: nowrap;
+      }
       #fs {
         position: fixed; top: var(--bar-h); right: 0; bottom: 0;
         width: 86vw; max-width: 380px; min-width: 0; flex: none;
@@ -422,6 +435,53 @@
       .node .act { padding: 4px 9px; font-size: 0.72rem; }
       .ftab { padding: 0.7rem 1rem; }
       #fhead button, #bar .icon-btn, #bar a, #bar button { padding: 6px 11px; }
+
+      /* Mobile input bar. #stage gets a bottom inset so the terminal sits
+         above the bar; app.js refines both via the visualViewport API when
+         the keyboard opens (this static value is the keyboard-closed
+         fallback for browsers without visualViewport). */
+      #stage { bottom: 90px; }
+      #compose {
+        display: flex; flex-direction: column; gap: 6px;
+        position: fixed; left: 0; right: 0; bottom: 0; z-index: 16;
+        padding: 7px 8px calc(7px + env(safe-area-inset-bottom));
+        background: rgba(11,13,12,0.96); border-top: 1px solid var(--border);
+        backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      }
+      body.fs-open #compose { display: none; }
+      #compose-keys { display: flex; gap: 6px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+      .ckey {
+        flex: 0 0 auto; background: var(--surface-2); color: var(--text-dim);
+        border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+        padding: 6px 13px; font-size: 0.82rem; font-family: var(--mono); cursor: pointer;
+        transition: background var(--ease), color var(--ease), border-color var(--ease);
+      }
+      .ckey:active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-dim); }
+      #compose-row { display: flex; gap: 6px; align-items: stretch; }
+      #compose-input {
+        flex: 1; min-width: 0; background: var(--bg); color: var(--text);
+        border: 1px solid var(--border-strong); border-radius: var(--r);
+        padding: 9px 12px; font-family: var(--mono);
+        font-size: 16px; /* >=16px stops iOS from zooming in on focus */
+      }
+      #compose-input:focus { outline: none; border-color: var(--accent-dim); }
+      #compose-send {
+        flex: 0 0 auto; background: var(--accent); color: #04140d; border: none;
+        border-radius: var(--r); padding: 0 17px; font-size: 1.15rem; font-weight: 700; cursor: pointer;
+        transition: background var(--ease);
+      }
+      #compose-send:active { background: var(--accent-bright); }
+      #compose-mic {
+        flex: 0 0 auto; background: var(--surface-2); color: var(--text-dim);
+        border: 1px solid var(--border-strong); border-radius: var(--r);
+        padding: 0 13px; font-size: 1.05rem; cursor: pointer;
+        transition: background var(--ease), color var(--ease), border-color var(--ease);
+      }
+      #compose-mic.rec {
+        background: #4a1d1d; color: #ff9090; border-color: #7a3b3b;
+        animation: micpulse 1s ease-in-out infinite;
+      }
+      @keyframes micpulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
     }
   </style>
 </head>
@@ -485,6 +545,32 @@
       <div id="fdrop"><span id="fdrop-text">drop to upload here</span></div>
     </div>
   </div>
+  <!-- Mobile input bar: composes a whole command (typed or dictated) in a
+       normal input, then sends it to the PTY on submit. Bypasses xterm's
+       hidden textarea, which both gets covered by the keyboard and duplicates
+       characters under iOS dictation. Touch-only (see CSS). -->
+  <form id="compose" autocomplete="off">
+    <div id="compose-keys">
+      <button type="button" class="ckey" data-key="esc">Esc</button>
+      <button type="button" class="ckey" data-key="tab">Tab</button>
+      <button type="button" class="ckey" data-key="ctrl-c">^C</button>
+      <button type="button" class="ckey" data-key="up">↑</button>
+      <button type="button" class="ckey" data-key="down">↓</button>
+      <button type="button" class="ckey" data-key="left">←</button>
+      <button type="button" class="ckey" data-key="right">→</button>
+    </div>
+    <div id="compose-row">
+      <!-- No autocorrect="off"/spellcheck="false": those attributes interfere
+           with iOS's dictation text-sync and make Siri dictation duplicate
+           each committed phrase. The trade-off is autocorrect on typed
+           commands, which the user can fix before hitting send. -->
+      <input id="compose-input" type="text" inputmode="text" enterkeyhint="send"
+             autocapitalize="off"
+             placeholder="type, or tap 🎤 to dictate…">
+      <button type="button" id="compose-mic" title="voice input (uses Web Speech, not the keyboard mic)" hidden>🎤</button>
+      <button type="submit" id="compose-send" title="send + Enter">⏎</button>
+    </div>
+  </form>
   <div id="preview">
     <div class="box">
       <div class="head">
