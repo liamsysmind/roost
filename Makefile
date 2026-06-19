@@ -4,7 +4,8 @@
 # `make cross` produces binaries for Linux/macOS host targets in dist/.
 
 VERSION  ?= $(shell git describe --tags --dirty --always 2>/dev/null || echo dev)
-LDFLAGS  := -s -w -X main.version=$(VERSION)
+# Recursive (=) so a target-specific VERSION override (see `dev`) flows through.
+LDFLAGS   = -s -w -X main.version=$(VERSION)
 GO       ?= go
 
 # vendor/ is gitignored but required at build time (//go:embed all:web bakes
@@ -28,7 +29,11 @@ $(VENDOR_STAMP):
 build: $(VENDOR_STAMP)
 	$(GO) build -trimpath -ldflags '$(LDFLAGS)' -o roost ./cmd/roost
 
-# Fast iteration: rebuild and restart the local server.
+# Fast iteration: rebuild and restart the local server. The per-build suffix
+# makes VERSION unique each run so embedded assets (served as ?v={{VERSION}})
+# bust the browser cache between edits — `git describe --dirty` alone is
+# identical across dirty rebuilds, so Safari would keep serving stale fs.js.
+dev: VERSION := $(VERSION)-dev$(shell date +%s)
 dev: build
 	pkill -x roost 2>/dev/null || true
 	./roost serve
