@@ -391,11 +391,15 @@
     esc: '\x1b', tab: '\t', 'ctrl-c': '\x03', enter: '\r',
     up: '\x1b[A', down: '\x1b[B', left: '\x1b[D', right: '\x1b[C',
   };
+  // Reassigned once Web Speech is wired up below; a no-op until then. Submit
+  // calls it so a still-running recognizer can't repopulate the cleared field.
+  let resetVoiceInput = () => {};
   if (composeEl) {
     composeEl.addEventListener('submit', (e) => {
       e.preventDefault();
       sendPty(composeInput.value + '\r');
       composeInput.value = '';
+      resetVoiceInput();
       composeInput.focus(); // keep the keyboard up for the next command
     });
     composeEl.querySelectorAll('.ckey').forEach((b) => {
@@ -424,6 +428,9 @@
     recog.lang = navigator.language || 'en-US';
     let recognizing = false, srBase = '', srFinal = '';
     recog.onresult = (e) => {
+      // A final result can arrive after the user hit send and we tore dictation
+      // down; without this guard it would rewrite the just-cleared field.
+      if (!recognizing) return;
       let interim = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const tr = e.results[i][0].transcript;
@@ -434,6 +441,12 @@
     const stop = () => { recognizing = false; micBtn.classList.remove('rec'); };
     recog.onend = stop;
     recog.onerror = stop;
+    // Sending the composed line clears the input; stop any in-flight dictation
+    // and drop its accumulators so a trailing result can't refill it.
+    resetVoiceInput = () => {
+      srBase = ''; srFinal = '';
+      if (recognizing) { recognizing = false; micBtn.classList.remove('rec'); try { recog.stop(); } catch (_) {} }
+    };
     micBtn.addEventListener('click', () => {
       if (recognizing) { recog.stop(); return; }
       srBase = composeInput.value ? composeInput.value.replace(/\s*$/, '') + ' ' : '';
