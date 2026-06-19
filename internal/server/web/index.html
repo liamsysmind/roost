@@ -560,12 +560,13 @@
         transition: background var(--ease);
       }
       #compose-send:active { background: var(--accent-bright); }
-      #compose-mic {
+      #compose-mic, #compose-paste {
         flex: 0 0 auto; background: var(--surface-2); color: var(--text-dim);
         border: 1px solid var(--border-strong); border-radius: var(--r);
         padding: 0 13px; font-size: 1.05rem; cursor: pointer;
         transition: background var(--ease), color var(--ease), border-color var(--ease);
       }
+      #compose-paste:active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-dim); }
       #compose-mic.rec {
         background: #4a1d1d; color: #ff9090; border-color: #7a3b3b;
         animation: micpulse 1s ease-in-out infinite;
@@ -652,6 +653,7 @@
       <button type="button" class="ckey" data-key="down">↓</button>
       <button type="button" class="ckey" data-key="left">←</button>
       <button type="button" class="ckey" data-key="right">→</button>
+      <button type="button" class="ckey" data-key="enter">↵</button>
     </div>
     <div id="compose-row">
       <!-- No autocorrect="off"/spellcheck="false": those attributes interfere
@@ -661,6 +663,7 @@
       <input id="compose-input" type="text" inputmode="text" enterkeyhint="send"
              autocapitalize="off"
              placeholder="type, or tap 🎤 to dictate…">
+      <button type="button" id="compose-paste" title="paste image from clipboard (iOS screenshot fallback)" hidden>📋</button>
       <button type="button" id="compose-mic" title="voice input (uses Web Speech, not the keyboard mic)" hidden>🎤</button>
       <button type="submit" id="compose-send" title="send + Enter">⏎</button>
     </div>

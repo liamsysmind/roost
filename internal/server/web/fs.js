@@ -714,6 +714,41 @@
     uploadFiles(files);
   }, true);
 
+  // iOS Safari fallback: a screenshot copied to the clipboard does NOT show up
+  // in the paste event's clipboardData.files, so the listener above sees
+  // nothing and the image can't be pasted. The async Clipboard API does expose
+  // it — but only from inside a user gesture (and it pops the OS "Allow Paste"
+  // prompt). So we surface an explicit button that reads image items out of the
+  // clipboard and uploads them exactly as a paste/drop would. Shown only where
+  // clipboard.read exists; on the desktop the compose bar is hidden by CSS.
+  const pasteBtn = document.getElementById('compose-paste');
+  if (pasteBtn && navigator.clipboard && navigator.clipboard.read) {
+    pasteBtn.hidden = false;
+    pasteBtn.addEventListener('click', async () => {
+      let items;
+      try {
+        items = await navigator.clipboard.read();
+      } catch (_) {
+        // Permission denied, or Safari reports the clipboard as empty/inaccessible.
+        window.toast && window.toast('Clipboard unavailable — copy an image first', 'err');
+        return;
+      }
+      const files = [];
+      for (const item of items) {
+        const type = item.types.find((t) => t.startsWith('image/'));
+        if (!type) continue;
+        const blob = await item.getType(type);
+        const ext = type.split('/')[1] || 'png';
+        files.push(new File([blob], `pasted-${Date.now()}-${files.length}.${ext}`, { type }));
+      }
+      if (!files.length) {
+        window.toast && window.toast('No image in clipboard', 'err');
+        return;
+      }
+      uploadFiles(files);
+    });
+  }
+
   document.getElementById('fmkdir').addEventListener('click', mkdir);
   document.getElementById('frefresh').addEventListener('click', refresh);
 
