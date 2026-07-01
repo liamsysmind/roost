@@ -92,6 +92,14 @@
       selectionBackground: 'rgba(84,180,135,0.30)',
     },
     allowProposedApi: true,
+    // When a TUI (claude/codex/vim/htop) turns on mouse tracking, xterm.js
+    // disables its own text selection and forwards drags to the app — so you
+    // can't drag-select multiple lines to copy. Other platforms escape this by
+    // holding Shift while dragging; on Mac the force-selection modifier is
+    // Option, but only if this flag is on (it defaults to false, which leaves
+    // Mac with no escape hatch at all). Enable it so Option+drag selects even
+    // inside a mouse-tracking app.
+    macOptionClickForcesSelection: true,
   });
 
   const fit = new FitAddon.FitAddon();
