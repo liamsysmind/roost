@@ -558,7 +558,7 @@ func (m *Manager) gcOnce() {
 			delete(m.sessions, id)
 			continue
 		}
-		if s.ClientCount() == 0 && s.LastUsed().Before(cutoff) {
+		if s.ClientCount() == 0 && s.LastActivity().Before(cutoff) {
 			victims = append(victims, s)
 			delete(m.sessions, id)
 		}

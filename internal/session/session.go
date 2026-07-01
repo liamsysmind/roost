@@ -24,10 +24,11 @@ type Session struct {
 	tty *os.File
 	log *Log
 
-	mu       sync.Mutex
-	clients  map[*Client]struct{}
-	closedAt atomic.Int64 // unix nano; 0 = live
-	lastUsed atomic.Int64 // unix nano
+	mu         sync.Mutex
+	clients    map[*Client]struct{}
+	closedAt   atomic.Int64 // unix nano; 0 = live
+	lastInput  atomic.Int64 // unix nano; last user interaction (input/attach/detach)
+	lastOutput atomic.Int64 // unix nano; last PTY output byte
 
 	cfg  Config
 	done chan struct{}
@@ -134,7 +135,9 @@ func newSession(id string, cfg Config, tmuxConfPath string, tmuxAlreadyExists bo
 		cfg:     cfg,
 		done:    make(chan struct{}),
 	}
-	s.lastUsed.Store(time.Now().UnixNano())
+	now := time.Now().UnixNano()
+	s.lastInput.Store(now)
+	s.lastOutput.Store(now)
 	go s.readLoop()
 	return s, nil
 }
@@ -156,7 +159,7 @@ func (s *Session) readLoop() {
 				c.send(chunk)
 			}
 			s.mu.Unlock()
-			s.lastUsed.Store(time.Now().UnixNano())
+			s.lastOutput.Store(time.Now().UnixNano())
 		}
 		if err != nil {
 			s.markClosed()
@@ -191,11 +194,7 @@ func (s *Session) Attach(c *Client) error {
 func (s *Session) Detach(c *Client) {
 	s.mu.Lock()
 	delete(s.clients, c)
-	n := len(s.clients)
 	s.mu.Unlock()
-	if n == 0 {
-		s.lastUsed.Store(time.Now().UnixNano())
-	}
 }
 
 // Input writes bytes from a client into the PTY.
@@ -205,7 +204,7 @@ func (s *Session) Input(p []byte) error {
 	}
 	_, err := s.tty.Write(p)
 	if err == nil {
-		s.lastUsed.Store(time.Now().UnixNano())
+		s.lastInput.Store(time.Now().UnixNano())
 	}
 	return err
 }
@@ -230,9 +229,26 @@ func (s *Session) IsClosed() bool {
 	return s.closedAt.Load() != 0
 }
 
-// LastUsed returns the last time bytes flowed through this session.
+// LastUsed returns the last time the user typed into this session (keystroke
+// input). It deliberately ignores program output AND attach/detach: an
+// animated TUI (claude/codex spinners, token counters, watch/top) emits bytes
+// continuously, which would otherwise pin every busy session to "now" and
+// collapse the home page's last-used ordering. Merely opening a tab to watch
+// output doesn't count as use — only actually working in it does.
 func (s *Session) LastUsed() time.Time {
-	return time.Unix(0, s.lastUsed.Load())
+	return time.Unix(0, s.lastInput.Load())
+}
+
+// LastActivity returns the more recent of last input and last output. The GC
+// uses this (not LastUsed) so a detached-but-busy session — a long build or an
+// agent running with no browser tab attached — isn't reaped while it's still
+// producing output.
+func (s *Session) LastActivity() time.Time {
+	in, out := s.lastInput.Load(), s.lastOutput.Load()
+	if out > in {
+		return time.Unix(0, out)
+	}
+	return time.Unix(0, in)
 }
 
 func (s *Session) markClosed() {
