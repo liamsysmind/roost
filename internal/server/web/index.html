@@ -62,8 +62,13 @@
       background: rgba(11,13,12,0.82); border-bottom: 1px solid var(--border);
       display: flex; align-items: center; gap: 0.5rem; padding: 0 0.7rem;
       font-size: 0.75rem; color: var(--text-dim); user-select: none;
-      backdrop-filter: blur(12px) saturate(1.3);
-      -webkit-backdrop-filter: blur(12px) saturate(1.3);
+      /* No backdrop-filter: nothing scrolls behind the fixed bar (its backdrop
+         is solid body bg), so the blur is visually a no-op — but a fixed
+         backdrop-filtered element pushes the page onto a compositing path that
+         leaves scroll ghosting/afterimages in the DOM-rendered terminal below.
+         WebGL isn't an option (breaks CJK glyph fallback, see app.js), so we
+         drop the blur instead. */
+      background: rgba(11,13,12,0.94);
       z-index: 10;
     }
     #bar .left  { flex: 1; display: flex; gap: 0.6rem; align-items: center; min-width: 0; }
@@ -88,6 +93,13 @@
 
     #stage { position: absolute; top: var(--bar-h); left: 0; right: 0; bottom: 0; display: flex; }
     #term { flex: 1; min-width: 200px; background: var(--bg); }
+
+    /* Promote the rendered terminal surface to its own GPU compositing layer so
+       the DOM renderer's per-scroll row repaints composite in isolation instead
+       of forcing repaints of neighbouring elements — cuts scroll ghosting.
+       will-change (not transform: translateZ) avoids the subpixel shift that
+       blurs CJK glyphs. */
+    .xterm-screen { will-change: transform; }
 
     /* Make xterm.js's scrollbar visible in the dark theme. Without these rules
        the default WebKit scrollbar renders as near-invisible grey on black,
