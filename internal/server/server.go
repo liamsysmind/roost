@@ -5,9 +5,11 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io/fs"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +37,7 @@ type Server struct {
 	static         fs.FS
 	aiReader       *ai.Reader
 	aiCodex        *ai.CodexReader
+	loginLimiter   *loginLimiter
 }
 
 func New(a *auth.Manager, sm *session.Manager, fsAPI *rfs.API, n *notify.Notifier, hookSecret, addr, version string, idleAlertAfter time.Duration) *Server {
@@ -46,6 +49,7 @@ func New(a *auth.Manager, sm *session.Manager, fsAPI *rfs.API, n *notify.Notifie
 		static:         static,
 		aiReader:       ai.NewReader(),
 		aiCodex:        ai.NewCodexReader(),
+		loginLimiter:   newLoginLimiter(),
 	}
 	s.setupRoutes()
 	return s
@@ -75,7 +79,6 @@ func (s *Server) setupRoutes() {
 	mux.HandleFunc("GET /api/sessions/{id}/cwd", s.handleSessionCwd)
 	mux.HandleFunc("POST /api/sessions/{id}/rename", s.handleSessionRename)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleSessionDelete)
-
 
 	(&rfs.Handler{API: s.FS}).Mount(mux)
 	(&ai.Handler{
@@ -138,7 +141,10 @@ func (s *Server) handleLoginGet(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "login template missing", http.StatusInternalServerError)
 		return
 	}
-	errMsg := r.URL.Query().Get("error")
+	// The error text is reflected into the page, so escape it — otherwise
+	// /login?error=<script> is a reflected XSS on a public, unauthenticated
+	// route that runs in the roost origin.
+	errMsg := html.EscapeString(r.URL.Query().Get("error"))
 	body := strings.ReplaceAll(string(b), "{{ERROR}}", errMsg)
 	body = strings.ReplaceAll(body, "{{VERSION}}", s.Version)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -150,19 +156,39 @@ func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+	key := clientIP(r)
+	now := time.Now()
+	if wait := s.loginLimiter.retryAfter(key, now); wait > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
+		http.Redirect(w, r, "/login?error=too+many+attempts,+try+again+later", http.StatusSeeOther)
+		return
+	}
 	if !s.Auth.Verify(r.FormValue("password")) {
+		s.loginLimiter.recordFailure(key, now)
 		http.Redirect(w, r, "/login?error=incorrect+password", http.StatusSeeOther)
 		return
 	}
-	s.Auth.SetCookie(w, s.Auth.CreateSession())
+	s.loginLimiter.recordSuccess(key)
+	s.Auth.SetCookie(w, s.Auth.CreateSession(), isHTTPS(r))
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// isHTTPS reports whether the client-facing connection is TLS. Behind the
+// Cloudflare tunnel the origin hop is plain HTTP but cloudflared forwards
+// X-Forwarded-Proto: https; direct loopback access has neither, so the session
+// cookie is only marked Secure when it actually travels over HTTPS.
+func isHTTPS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	return r.Header.Get("X-Forwarded-Proto") == "https"
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(auth.CookieName); err == nil {
 		s.Auth.DropSession(c.Value)
 	}
-	s.Auth.ClearCookie(w)
+	s.Auth.ClearCookie(w, isHTTPS(r))
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 

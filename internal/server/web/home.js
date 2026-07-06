@@ -24,6 +24,15 @@
     return s.trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
   }
 
+  // Session IDs are validated on creation, but the orphan-log branch in the
+  // manager derives an ID straight from a filename on disk — so escape before
+  // dropping it into innerHTML to keep a crafted log name out of the DOM.
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]));
+  }
+
   async function rename(oldID) {
     const raw = prompt(`Rename "${oldID}" to:`, oldID);
     if (raw === null) return;
@@ -74,7 +83,7 @@
       item.innerHTML = `
         <a class="link" href="/s/${encodeURIComponent(s.id)}" target="_blank" rel="noopener">
           <div class="row">
-            <span class="id ${s.closed ? 'closed' : ''}">${s.id}${s.closed ? ' (closed)' : ''}</span>
+            <span class="id ${s.closed ? 'closed' : ''}">${escapeHtml(s.id)}${s.closed ? ' (closed)' : ''}</span>
             <span class="meta">${s.clients}↔ · ${fmtSize(s.log_size_bytes)} · ${fmtAgo(s.last_used)}</span>
           </div>
         </a>

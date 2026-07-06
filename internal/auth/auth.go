@@ -69,23 +69,30 @@ func (m *Manager) DropSession(id string) {
 	m.mu.Unlock()
 }
 
-func (m *Manager) SetCookie(w http.ResponseWriter, sessionID string) {
+// secure marks the cookie Secure so it only rides HTTPS. It's a parameter
+// rather than a constant because roost is reached two ways: over HTTPS through
+// Cloudflare (where we want Secure) and over plain HTTP on loopback via an SSH
+// tunnel (where a Secure cookie would never be sent, breaking local login).
+// The caller decides based on the request's forwarded proto.
+func (m *Manager) SetCookie(w http.ResponseWriter, sessionID string, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     CookieName,
 		Value:    sessionID,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(SessionTTL.Seconds()),
 	})
 }
 
-func (m *Manager) ClearCookie(w http.ResponseWriter) {
+func (m *Manager) ClearCookie(w http.ResponseWriter, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     CookieName,
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})
