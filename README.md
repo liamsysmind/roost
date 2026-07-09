@@ -40,7 +40,9 @@ all in one page, on every device you own.
 - [Configuration](#configuration)
 - [Running as a service](#running-as-a-service)
 - [Multi-user on one machine](#multi-user-on-one-machine)
+- [Tailscale access](#tailscale-access)
 - [Public access](#public-access)
+- [Security](#security)
 - [Why this exists](#why-this-exists)
 - [What roost isn't](#what-roost-isnt)
 
@@ -56,7 +58,7 @@ all in one page, on every device you own.
   rougher edges.
 - **Browser**: any modern browser. Daily-tested with Chrome on Windows
   and Chrome/Firefox on Linux.
-- **Build**: Go 1.23+ if building from source. Prebuilt binaries on
+- **Build**: Go 1.25+ if building from source. Prebuilt binaries on
   [Releases](https://github.com/liamsysmind/roost/releases).
 
 ### Install
@@ -65,11 +67,16 @@ all in one page, on every device you own.
 [Releases](https://github.com/liamsysmind/roost/releases/latest):
 
 ```bash
-curl -LO https://github.com/liamsysmind/roost/releases/latest/download/roost-v0.1.0-linux-amd64.tar.gz
-tar -xzf roost-v0.1.0-linux-amd64.tar.gz
-cd roost-v0.1.0-linux-amd64
+VER=v0.4.2   # latest tag — check the Releases page
+curl -LO https://github.com/liamsysmind/roost/releases/download/$VER/roost-$VER-linux-amd64.tar.gz
+tar -xzf roost-$VER-linux-amd64.tar.gz
+cd roost-$VER-linux-amd64
 sudo install -m 0755 roost /usr/local/bin/roost   # optional
 ```
+
+Each tarball ships the `roost` binary, `LICENSE`, and `INSTALL.md`; the
+release also carries a `SHA256SUMS` you can verify with
+`shasum -a 256 -c SHA256SUMS`.
 
 **Or build from source:**
 
@@ -139,10 +146,13 @@ shell. Each session is a separate URL like `/s/zephyr-build`, so:
 
 ### Terminal
 
-A full xterm.js terminal with WebGL rendering, a 100K-line in-browser
-scrollback buffer, and an effectively unbounded on-disk session log
-that's replayed when you reattach — closing your laptop and coming back
-the next morning still shows the conversation.
+A full xterm.js terminal with a 100K-line in-browser scrollback buffer
+and an effectively unbounded on-disk session log that's replayed when
+you reattach — closing your laptop and coming back the next morning
+still shows the conversation. Rendering uses xterm.js's DOM renderer,
+not WebGL: the GPU atlas renderer draws every glyph from a single font
+and shows CJK and other fallback characters as dashes, so roost stays on
+the DOM path to keep mixed-width and non-Latin text correct.
 
 Scrollback navigation that works the way you'd expect:
 
@@ -433,6 +443,19 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the dev loop and code
 conventions, and [CLAUDE.md](CLAUDE.md) for the architecture overview.
 
 ## Security
+
+roost is a browser into a real shell, so the login guards your machine:
+
+- **One password**, stored as a bcrypt hash — no account system.
+- **Session cookie** is `HttpOnly`, `SameSite=Lax`, and marked `Secure`
+  whenever the request arrives over HTTPS (plain-HTTP loopback still
+  works for SSH-tunnel use).
+- **Login rate limiting.** Password guesses are throttled per client IP
+  (`CF-Connecting-IP` when behind a tunnel) with exponential backoff, so
+  an exposed login page can't be brute-forced at speed.
+- **Loopback by default.** For public exposure, put SSO in front with
+  [Cloudflare Access](docs/cloudflare.md) so the password becomes a
+  second factor rather than the only wall.
 
 Found a security issue? Please follow [SECURITY.md](SECURITY.md) — don't
 open a public issue.
