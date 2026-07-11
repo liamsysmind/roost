@@ -65,8 +65,10 @@ type rawEvent struct {
 	// after a context-window compaction. It's structurally a user message but
 	// not user input.
 	IsCompactSummary bool `json:"isCompactSummary"`
-	// Origin labels the source of a programmatically-injected message —
-	// e.g. {"kind":"task-notification"} for background-task completion notices.
+	// Origin labels the source of a message. Newer Claude Code tags real
+	// user input with {"kind":"human"} and machine-injected messages with
+	// other kinds (e.g. "task-notification" for background-task notices);
+	// older versions omit origin entirely on real prompts.
 	Origin *struct {
 		Kind string `json:"kind"`
 	} `json:"origin"`
@@ -430,7 +432,11 @@ func (r *Reader) readActive(slug, file string, mtime time.Time) (*ActiveSession,
 			if ev.IsMeta || ev.IsCompactSummary {
 				continue
 			}
-			if ev.Origin != nil && ev.Origin.Kind != "" {
+			// Newer Claude Code tags real prompts with origin.kind="human" and
+			// machine-injected messages with other kinds; older builds set no
+			// origin on real prompts. So skip only non-human origins — a blanket
+			// "any origin ⇒ skip" now drops every real prompt.
+			if ev.Origin != nil && ev.Origin.Kind != "" && ev.Origin.Kind != "human" {
 				continue
 			}
 			var m userMessage
@@ -482,6 +488,11 @@ func isMetaUserMessage(content string) bool {
 	if strings.HasPrefix(trimmed, "<command-name>") ||
 		strings.HasPrefix(trimmed, "<command-message>") ||
 		strings.HasPrefix(trimmed, "<command-args>") {
+		return true
+	}
+	// Claude Code records a user-triggered interrupt as a synthetic user
+	// message; it isn't a typed prompt.
+	if strings.HasPrefix(trimmed, "[Request interrupted by user") {
 		return true
 	}
 	// Post-compaction continuation body. The top-level isCompactSummary flag
