@@ -419,6 +419,25 @@
     });
   }
 
+  // A pasted image/file was just uploaded by the file panel (fs.js). Drop its
+  // absolute path into the prompt so the agent reads the file directly instead
+  // of shelling out to `find ~ -iname <name>` to locate a bare filename — which
+  // hangs for minutes on a large / iCloud-synced home directory. Mobile shows
+  // the compose bar, so fill that; desktop has none, so type at the PTY prompt.
+  window.addEventListener('roost-paste-path', (e) => {
+    const paths = (e.detail && e.detail.paths) || [];
+    if (!paths.length) return;
+    const text = paths.join(' ') + ' ';
+    const composeShown = composeEl && getComputedStyle(composeEl).display !== 'none';
+    if (composeShown && composeInput) {
+      const base = composeInput.value.replace(/\s*$/, '');
+      composeInput.value = (base ? base + ' ' : '') + text;
+      composeInput.focus();
+    } else {
+      sendPty(text);
+    }
+  });
+
   // Voice input via the Web Speech API rather than the keyboard's dictation
   // key. iOS Safari's built-in dictation has an OS-level bug that re-inserts
   // the previous phrase into a web <input> on every committed chunk (the URL

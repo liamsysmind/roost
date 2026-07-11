@@ -562,7 +562,7 @@
   // mistake — server would happily stream all of them with no UI off-ramp).
   const CONFIRM_BYTES = 100 * 1024 * 1024;
 
-  async function uploadFiles(files) {
+  async function uploadFiles(files, opts = {}) {
     if (!files.length) return;
     const target = absCwd();
     const totalBytes = files.reduce((s, f) => s + (f.size || 0), 0);
@@ -597,6 +597,14 @@
       setStatus(`uploaded ${out.saved?.length || files.length} file(s) → ${target}`);
       window.toast && window.toast(`Uploaded ${out.saved?.length || files.length} file(s) → ${target}`, 'ok');
       refresh();
+      if (opts.insertPath) {
+        // Hand the freshly-uploaded absolute path(s) to the prompt so the agent
+        // reads the file directly. Without this, referencing a bare "image.png"
+        // makes the agent run `find ~ -iname image.png` to locate it — which
+        // hangs for minutes on a large / iCloud-synced home directory.
+        const paths = files.map((f) => target + '/' + f.name);
+        window.dispatchEvent(new CustomEvent('roost-paste-path', { detail: { paths } }));
+      }
     } catch (err) {
       hideProgress();
       if (err && err.message === 'cancelled') {
@@ -711,7 +719,7 @@
     if (!files.length) return;
     e.preventDefault();
     e.stopPropagation();
-    uploadFiles(files);
+    uploadFiles(files, { insertPath: true });
   }, true);
 
   // iOS Safari fallback: a screenshot copied to the clipboard does NOT show up
@@ -745,7 +753,7 @@
         window.toast && window.toast('No image in clipboard', 'err');
         return;
       }
-      uploadFiles(files);
+      uploadFiles(files, { insertPath: true });
     });
   }
 
