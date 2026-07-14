@@ -431,6 +431,16 @@ first-class thing you can scroll back to, that's the gap `roost` fills.
   Edit files with whatever editor you run inside the terminal.
 - **Not a Claude Code clone.** It surfaces what Claude Code (or Codex)
   already records on disk; it doesn't run the agent itself.
+- **Not a browser/GUI host for agents.** Your agents run on a headless
+  box you reach through a terminal, so browser-driving agent tools — e.g.
+  Claude Code's *Claude in Chrome* — have no interactive browser to attach
+  to. They fail, and because the failed tool call has no timeout they can
+  wedge the whole agent: it hangs mid-turn on a spinner that never advances
+  or a "1 shell command running" that never returns, and Esc / Ctrl+C don't
+  reach it (you have to kill the agent process and `claude --continue`).
+  Turn these tools off — add `"mcp__claude-in-chrome"` to `permissions.deny`
+  in `~/.claude/settings.json`. Use `WebFetch` to read pages, and do real
+  browsing on your own machine.
 - **No usage cost in dollars.** API prices shift, subscription plans
   bill differently. Token counts are shown — interpret them with your
   own price sheet.
