@@ -164,9 +164,19 @@ Scrollback navigation that works the way you'd expect:
 
 Copy / paste:
 
-- `Ctrl+C` copies the selection — or sends `SIGINT` if nothing is selected
-- `Ctrl+Shift+C` always copies
-- `Ctrl+Shift+V` pastes from clipboard into the shell
+- **Select text to copy it.** Finishing a drag (or a double / triple-click)
+  copies the selection to the clipboard automatically. Inside a mouse-tracking
+  TUI (Claude Code, Codex, vim), hold **Shift** while dragging (macOS:
+  **Option**) so the selection isn't forwarded to the app.
+- `Ctrl+C` also copies when there's a selection — or sends `SIGINT` if nothing
+  is selected.
+- `Ctrl+Shift+V` pastes from the clipboard into the shell.
+- **Click a link** — `http(s)://` URLs open in a new tab; file paths open in
+  the file panel's preview.
+
+> `Ctrl+Shift+C` is **not** a copy key on Windows / Linux Chrome — the browser
+> reserves it for DevTools and a page can't override that. Copy-on-select and
+> `Ctrl+C` are the portable paths.
 
 ### File panel
 

@@ -204,6 +204,19 @@
     e.preventDefault();
   }, { passive: false, capture: true });
 
+  // Copy-on-select: when a drag (or double/triple-click) finishes with text
+  // selected, copy it to the clipboard automatically. This is the primary copy
+  // path so no shortcut is needed — which matters on Windows/Chrome, where
+  // Ctrl+Shift+C is the browser's DevTools shortcut and can't be intercepted
+  // by the page. Ctrl+C on a live selection still copies too. mouseup is a user
+  // gesture, so the async clipboard write is permitted.
+  termEl.addEventListener('mouseup', () => {
+    const sel = term.getSelection();
+    if (sel && sel.trim() && navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(sel).catch(() => {});
+    }
+  });
+
   // --- clickable file paths in terminal output ---
   // xterm.js's link provider runs per visible buffer line. We match path-like
   // tokens and dispatch a custom event to fs.js, which owns the preview modal.
@@ -281,6 +294,45 @@
               detail: { path, line: lineHint, col: colHint, cwd: lastTerminalCwd },
             }));
           },
+        });
+      }
+      callback(links.length ? links : undefined);
+    },
+  });
+
+  // --- clickable http(s) URLs → open in a new tab ---
+  // A second link provider (xterm queries all of them). Kept separate from the
+  // file-path provider so each regex stays simple; the file-path lookbehind
+  // already refuses to match inside URLs, so the two never fight over a range.
+  const URL_RE = /\bhttps?:\/\/[^\s<>"'`]+/g;
+  term.registerLinkProvider({
+    provideLinks(lineNumber, callback) {
+      const line = term.buffer.active.getLine(lineNumber - 1);
+      if (!line) return callback(undefined);
+      const text = line.translateToString(true);
+      if (!text || text.indexOf('://') < 0) return callback(undefined);
+      const colMap = buildColMap(line);
+      const links = [];
+      URL_RE.lastIndex = 0;
+      let m;
+      while ((m = URL_RE.exec(text)) !== null) {
+        // Trim trailing sentence punctuation so "see https://x.com." or
+        // "(https://x.com)" don't drag the period / paren into the URL.
+        const url = m[0].replace(/[.,;:!?)\]}'"]+$/, '');
+        if (!url) continue;
+        const startIdx = m.index;
+        const endIdx   = m.index + url.length;
+        const startCol = colMap[startIdx] || (startIdx + 1);
+        const endCol   = (colMap[endIdx] || (endIdx + 1)) - 1;  // inclusive
+        links.push({
+          text: url,
+          range: {
+            start: { x: startCol, y: lineNumber },
+            end:   { x: endCol,   y: lineNumber },
+          },
+          decorations: { pointerCursor: true, underline: true },
+          // noopener/noreferrer: the opened page gets no handle back to roost.
+          activate: () => { window.open(url, '_blank', 'noopener,noreferrer'); },
         });
       }
       callback(links.length ? links : undefined);
