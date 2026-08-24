@@ -67,7 +67,7 @@ all in one page, on every device you own.
 [Releases](https://github.com/liamsysmind/roost/releases/latest):
 
 ```bash
-VER=v0.4.2   # latest tag — check the Releases page
+VER=v0.5.0   # latest tag — check the Releases page
 curl -LO https://github.com/liamsysmind/roost/releases/download/$VER/roost-$VER-linux-amd64.tar.gz
 tar -xzf roost-$VER-linux-amd64.tar.gz
 cd roost-$VER-linux-amd64
