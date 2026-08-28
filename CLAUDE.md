@@ -101,6 +101,13 @@ proxy, etc.) rather than into this codebase.
   without a UI session. The hook is a one-line `roost notify-stop`
   invocation (printed by `roost hook-info`); the binary reads Claude
   Code's Stop JSON from stdin, extracts cwd, and POSTs.
+- **xterm.js is patched at fetch time, not edited in place.** `vendor/` is
+  gitignored, so a direct edit there vanishes on a fresh clone with no error.
+  `scripts/fetch-vendor.sh` applies two composition fixes after downloading
+  the bundle; each anchor must match exactly once or the fetch fails, so an
+  xterm.js bump breaks the build instead of silently restoring the bug.
+  Re-running `make` does NOT re-apply them — the Makefile only fetches when
+  `vendor/xterm.js` is absent, so delete it first to test a patch change.
 - **Stop-hook gating is client-side.** Server fans out every notification;
   notify.js only fires the OS toast when the tab matches all of: same
   cwd as the event, hidden/unfocused, `currentApp === 'claude'`, idle
@@ -122,6 +129,21 @@ proxy, etc.) rather than into this codebase.
   `authMiddleware` and only for `POST /api/notify` so far.
 - **No comments stating the obvious.** Comment WHY a non-obvious choice was
   made (e.g. why `=ID` doesn't work with `tmux display-message`).
+- **Prove a frontend change reached the browser before judging it.** Every
+  asset is served as `?v={{VERSION}}`, and `git describe --tags --dirty`
+  returns the same string across every dirty rebuild — so plain `make` leaves
+  the browser on the cached copy no matter how often you reload. Build with a
+  unique version while the tree is dirty:
+  `make build VERSION="v0.5.1-dev$(date +%s)"` (or `make dev`). The WebSocket
+  auto-reconnect hides this: restarting roost respawns the server-side tmux
+  clients, so everything looks fresh while the page keeps its old JavaScript.
+  A fix that "didn't work" has usually not run yet.
+- **Docs and code must not drift apart.** Rules written up elsewhere — the
+  CoStruct IME spec, README, this file — describe what the code actually does.
+  When a review or any outside source suggests a rule, check it against the
+  implementation before adopting it, and change both together or neither.
+  Adopting a reviewer's rule without that check is how this file ends up
+  describing software that doesn't exist.
 
 ## Testing
 

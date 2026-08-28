@@ -82,12 +82,19 @@ const patches = [
     find:
       '_handleAnyTextareaChanges(){const e=this._textarea.value;setTimeout((()=>{' +
       'if(!this._isComposing){const t=this._textarea.value,i=t.replace(e,"");',
+    // The delta is a prefix strip, which only holds for append-only input —
+    // true here because a terminal's hidden textarea only grows at the end.
+    // If the baseline is not a prefix the invariant is broken and any delta
+    // we compute is a guess, so bail rather than fall back to replace(): that
+    // is the bug above, and on a violated invariant it would strip the wrong
+    // occurrence and send garbage to the PTY.
     repl:
       '_handleAnyTextareaChanges(){if(this._roostPendingChange)return;' +
       'this._roostPendingChange=!0;const e=this._textarea.value;setTimeout((()=>{' +
       'this._roostPendingChange=!1;' +
-      'if(!this._isComposing){const t=this._textarea.value,' +
-      'i=t.startsWith(e)?t.slice(e.length):t.replace(e,"");',
+      'if(!this._isComposing){const t=this._textarea.value;' +
+      'if(t.length>e.length&&!t.startsWith(e)){this._dataAlreadySent="";return}' +
+      'const i=t.startsWith(e)?t.slice(e.length):"";',
   },
 ];
 
