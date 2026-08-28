@@ -132,20 +132,6 @@
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown') return true;
 
-    // Ctrl+Space is the macOS input-source switch, and letting it through
-    // duplicates committed CJK. xterm.js's CompositionHelper flushes the
-    // pre-edit buffer twice: once from keydown (Space arrives as keyCode 32,
-    // not 229, because the IME doesn't claim a Ctrl combo) and again from the
-    // compositionend that the switch itself triggers. Its _dataAlreadySent
-    // guard only dedupes the keyCode-229 path, so both flushes send the same
-    // text. attachCustomKeyEventHandler runs before compositionHelper.keydown,
-    // so returning false here leaves compositionend as the only sender.
-    // Costs the Ctrl+Space → NUL binding, which nothing here uses.
-    if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey &&
-        (e.key === ' ' || e.code === 'Space')) {
-      return false;
-    }
-
     // Ctrl+C with selection → copy, do NOT forward as SIGINT.
     if (e.ctrlKey && !e.shiftKey && (e.key === 'c' || e.key === 'C') && term.hasSelection()) {
       const sel = term.getSelection();
