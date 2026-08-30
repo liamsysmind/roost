@@ -234,12 +234,55 @@
   // be ':' or '/') and inside longer paths.
   const FILE_PATH_RE = /(?<![\w./:])((?:\.{1,2}|~)?\/[\w.~-]+(?:\/[\w.~-]+)*|[\w.~-]+(?:\/[\w.~-]+)+)(?::(\d+)(?::(\d+))?)?/g;
 
-  // Cache the terminal session's cwd; fs.js dispatches this on every change.
-  // Required for resolving relative paths at click time.
+  // A relative path is only meaningful against the cwd that was in effect when
+  // the line was PRINTED, which is not necessarily the cwd now. Resolving every
+  // click against one live value silently opens the wrong file as soon as the
+  // shell cd's, or when one agent exits and another starts in a different
+  // project — the whole earlier scrollback keeps pointing at the new directory.
+  // So record a mark each time the polled cwd changes, and resolve a click
+  // against the last mark at or above the clicked line.
+  //
+  // Marks hold xterm.js markers rather than raw line numbers because the buffer
+  // trims from the top once `scrollback` is exceeded: a marker follows its line
+  // as everything shifts up, and disposes itself once its line is gone.
+  //
+  // fs.js polls every 2s, so a line printed in the window between an actual
+  // `cd` and the next poll is attributed to the previous cwd. Narrowing that
+  // would mean shell integration, which the cwd design deliberately avoids.
+  const cwdMarks = [];    // { marker, cwd }, ascending by line
+  let baseCwd = '';       // cwd governing the buffer above the first live mark
   let lastTerminalCwd = '';
+
+  // Trimming only ever removes leading marks, so promoting a disposed mark's
+  // cwd to baseCwd keeps the lines it governed — which may still be on screen —
+  // anchored instead of silently falling back to the current directory.
+  function pruneCwdMarks() {
+    while (cwdMarks.length && cwdMarks[0].marker.isDisposed) {
+      baseCwd = cwdMarks.shift().cwd;
+    }
+  }
+
   window.addEventListener('roost-cwd-changed', (e) => {
-    lastTerminalCwd = (e.detail && e.detail.current) || '';
+    const cwd = (e.detail && e.detail.current) || '';
+    lastTerminalCwd = cwd;
+    if (!cwd) return;
+    pruneCwdMarks();
+    const marker = term.registerMarker(0);
+    if (marker) cwdMarks.push({ marker, cwd });
   });
+
+  // Lines replayed from the disk log predate every mark (the page has only
+  // been open since the last load), so they fall back to the current cwd —
+  // exactly the old behaviour, no regression.
+  function cwdForLine(line) {
+    pruneCwdMarks();
+    let cwd = baseCwd;
+    for (const m of cwdMarks) {
+      if (m.marker.line > line) break;
+      cwd = m.cwd;
+    }
+    return cwd || lastTerminalCwd;
+  }
 
   // Walk a buffer line's cells once and build a JS-char-index to 1-based
   // xterm column lookup. Wide chars (CJK, emoji) occupy two cells but one
@@ -264,6 +307,44 @@
     return map;
   }
 
+  // The regex only says "this token is path-shaped", which is not the same as
+  // "this file is here": agents quote hypothetical paths, paths in other
+  // repos, and paths that existed three commits ago. Decorating those produces
+  // links that look live and die on click. POST the candidates to
+  // /api/fs/exist, which resolves each against the line's cwd, enforces
+  // containment under the fs root, follows symlinks and stats the result —
+  // then decorate only the survivors, carrying the server's resolved `rel` so
+  // the click needs no second resolution.
+  //
+  // Keyed on line text + cwd: a redrawn line re-validates on its new text, and
+  // identical text under a different cwd doesn't reuse a stale verdict. The
+  // cache matters because xterm calls provideLinks on every newly-hovered row.
+  const existCache = new Map();
+  const EXIST_CACHE_MAX = 400;
+  const EXIST_MAX_PATHS = 64;   // server rejects >256; a real line has a handful
+
+  async function resolveExisting(cwd, paths) {
+    const key = cwd + '\u0000' + paths.join('\u0000');
+    const hit = existCache.get(key);
+    if (hit) return hit;
+    const r = await fetch('/api/fs/exist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cwd, paths }),
+    });
+    if (!r.ok) throw new Error('exist: HTTP ' + r.status);
+    const data = await r.json();
+    const found = new Map();
+    for (const res of (data.results || [])) {
+      if (res && res.exists && res.rel) found.set(res.input, res.rel);
+    }
+    // Crude but adequate: the cache exists to collapse repeat hovers, not to
+    // be long-lived, so drop it wholesale rather than tracking LRU order.
+    if (existCache.size >= EXIST_CACHE_MAX) existCache.clear();
+    existCache.set(key, found);
+    return found;
+  }
+
   term.registerLinkProvider({
     provideLinks(lineNumber, callback) {
       const line = term.buffer.active.getLine(lineNumber - 1);
@@ -271,32 +352,50 @@
       const text = line.translateToString(true);
       if (!text || text.indexOf('/') < 0) return callback(undefined);
       const colMap = buildColMap(line);
-      const links = [];
+      const cands = [];
       FILE_PATH_RE.lastIndex = 0;
       let m;
-      while ((m = FILE_PATH_RE.exec(text)) !== null) {
-        const path = m[1];
-        const lineHint = m[2] ? parseInt(m[2], 10) : null;
-        const colHint  = m[3] ? parseInt(m[3], 10) : null;
-        const startIdx = m.index;
-        const endIdx   = m.index + m[0].length;
-        const startCol = colMap[startIdx] || (startIdx + 1);
-        const endCol   = (colMap[endIdx] || (endIdx + 1)) - 1;  // inclusive
-        links.push({
-          text: m[0],
-          range: {
-            start: { x: startCol, y: lineNumber },
-            end:   { x: endCol,   y: lineNumber },
-          },
-          decorations: { pointerCursor: true, underline: true },
-          activate: () => {
-            window.dispatchEvent(new CustomEvent('roost-open-preview', {
-              detail: { path, line: lineHint, col: colHint, cwd: lastTerminalCwd },
-            }));
-          },
+      while ((m = FILE_PATH_RE.exec(text)) !== null && cands.length < EXIST_MAX_PATHS) {
+        cands.push({
+          path:     m[1],
+          lineHint: m[2] ? parseInt(m[2], 10) : null,
+          colHint:  m[3] ? parseInt(m[3], 10) : null,
+          startIdx: m.index,
+          endIdx:   m.index + m[0].length,
+          whole:    m[0],
         });
       }
-      callback(links.length ? links : undefined);
+      if (!cands.length) return callback(undefined);
+      const cwd = cwdForLine(lineNumber - 1);
+
+      // found === null means validation didn't happen (request failed), so
+      // every candidate is decorated and fs.js resolves at click time — the
+      // behaviour from before this endpoint was wired up.
+      const emit = (found) => {
+        const links = [];
+        for (const c of cands) {
+          if (found && !found.has(c.path)) continue;
+          const startCol = colMap[c.startIdx] || (c.startIdx + 1);
+          const endCol   = (colMap[c.endIdx] || (c.endIdx + 1)) - 1;  // inclusive
+          const rel      = found ? found.get(c.path) : undefined;
+          links.push({
+            text: c.whole,
+            range: {
+              start: { x: startCol, y: lineNumber },
+              end:   { x: endCol,   y: lineNumber },
+            },
+            decorations: { pointerCursor: true, underline: true },
+            activate: () => {
+              window.dispatchEvent(new CustomEvent('roost-open-preview', {
+                detail: { path: c.path, line: c.lineHint, col: c.colHint, cwd, rel },
+              }));
+            },
+          });
+        }
+        callback(links.length ? links : undefined);
+      };
+
+      resolveExisting(cwd, cands.map(c => c.path)).then(emit).catch(() => emit(null));
     },
   });
 
