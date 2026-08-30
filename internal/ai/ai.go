@@ -56,6 +56,10 @@ type rawEvent struct {
 	UUID      string           `json:"uuid"`
 	Message   *json.RawMessage `json:"message"`
 	Timestamp string           `json:"timestamp"`
+	// Cwd is the working directory Claude Code was launched in, recorded
+	// verbatim on every real event. This is the only trustworthy source for
+	// the project path — see slugToProject.
+	Cwd string `json:"cwd"`
 	// IsMeta flags entries that aren't real user input (slash-command body
 	// templates, etc.) — Claude Code sets this on programmatically-generated
 	// "user" messages.
@@ -199,7 +203,7 @@ func (r *Reader) Sessions(since time.Time, limit int) ([]SessionInfo, error) {
 			continue
 		}
 		slug := p.Name()
-		project := slugToProject(slug)
+		project := r.projectPath(slug)
 		files, err := os.ReadDir(filepath.Join(r.Root, slug))
 		if err != nil {
 			continue
@@ -233,11 +237,75 @@ func (r *Reader) Sessions(since time.Time, limit int) ([]SessionInfo, error) {
 	return out, nil
 }
 
+// slugToProject reverses Claude Code's directory-name encoding. It is LOSSY
+// and only a fallback: the encoding replaces every '/' with '-', so a
+// directory whose own name contains a hyphen is indistinguishable from a
+// separator. "-Users-me-ppt-present" decodes to "/Users/me/ppt/present" when
+// the real path is "/Users/me/ppt-present". Prefer projectPath, which reads
+// the cwd the JSONL itself records; fall back here only when a file carries
+// no cwd at all.
 func slugToProject(slug string) string {
 	if strings.HasPrefix(slug, "-") {
 		return "/" + strings.ReplaceAll(slug[1:], "-", "/")
 	}
 	return slug
+}
+
+// projectPath returns the true working directory for a project slug. Every
+// jsonl in one slug directory was written from the same cwd by construction,
+// so one file answers for the whole directory; the newest is used because an
+// older file may predate the cwd field. Falls back to the lossy slug decode
+// when nothing yields a cwd.
+func (r *Reader) projectPath(slug string) string {
+	dir := filepath.Join(r.Root, slug)
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return slugToProject(slug)
+	}
+	var newest string
+	var mtime time.Time
+	for _, f := range files {
+		if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
+			continue
+		}
+		info, err := f.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().After(mtime) {
+			newest, mtime = f.Name(), info.ModTime()
+		}
+	}
+	if newest == "" {
+		return slugToProject(slug)
+	}
+	if cwd := cwdFromFile(filepath.Join(dir, newest)); cwd != "" {
+		return cwd
+	}
+	return slugToProject(slug)
+}
+
+// cwdFromFile returns the first cwd recorded in a jsonl, or "". The leading
+// lines are session metadata that carry no cwd, so this scans until it finds
+// one rather than decoding only the first line.
+func cwdFromFile(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<16), 1<<22)
+	for sc.Scan() {
+		var ev rawEvent
+		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
+			continue
+		}
+		if ev.Cwd != "" {
+			return ev.Cwd
+		}
+	}
+	return ""
 }
 
 func sortByModifiedDesc(s []SessionInfo) {
@@ -390,12 +458,19 @@ func (r *Reader) readActive(slug, file string, mtime time.Time) (*ActiveSession,
 		Modified: mtime,
 	}
 
+	cwdSeen := false
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1<<16), 1<<22)
 	for sc.Scan() {
 		var ev rawEvent
 		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
 			continue
+		}
+		// Free here — we are already decoding every line — and authoritative,
+		// unlike the slug decode this overwrites.
+		if ev.Cwd != "" && !cwdSeen {
+			out.Project = ev.Cwd
+			cwdSeen = true
 		}
 		switch ev.Type {
 		case "assistant":
