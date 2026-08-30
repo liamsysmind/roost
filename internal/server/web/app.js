@@ -304,7 +304,15 @@
   // A second link provider (xterm queries all of them). Kept separate from the
   // file-path provider so each regex stays simple; the file-path lookbehind
   // already refuses to match inside URLs, so the two never fight over a range.
-  const URL_RE = /\bhttps?:\/\/[^\s<>"'`]+/g;
+  // The excluded set carries CJK and full-width punctuation on purpose. A
+  // line like "部署好了 https://x.app/a.html（重新整理）" is ordinary Chinese
+  // prose, but U+FF08 is not whitespace, so a plain \S+ match swallows the
+  // whole parenthetical and the click 404s on a percent-encoded tail. CJK
+  // *ideographs* stay allowed — https://zh.wikipedia.org/wiki/臺灣 is a valid
+  // IRI and must remain clickable; it is only the punctuation that can never
+  // appear inside a URL.
+  const URL_RE =
+    /\bhttps?:\/\/[^\s<>"'`\u3000-\u303f\uff01-\uff0f\uff1a-\uff20\uff3b-\uff40\uff5b-\uff65]+/g;
   term.registerLinkProvider({
     provideLinks(lineNumber, callback) {
       const line = term.buffer.active.getLine(lineNumber - 1);
