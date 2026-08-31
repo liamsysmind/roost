@@ -93,6 +93,23 @@
 
     #stage { position: absolute; top: var(--bar-h); left: 0; right: 0; bottom: 0; display: flex; }
     #term { flex: 1; min-width: 200px; background: var(--bg); }
+    /* IME pre-edit text. xterm.js parks this over the cursor and copies the
+       terminal's font family, size and cell metrics onto it inline, so it is
+       already on the grid — but it leaves it black-on-white, identical to
+       text that has actually been sent. While composing 注音 or 拼音 there is
+       then no way to see which characters are still uncommitted. Mark the run
+       the way every native IME does: an underline, plus a faint tint so the
+       region is visible from the first keystroke. Deliberately no padding —
+       `left` is the exact cell x, and padding would push the glyphs off the
+       column they belong to. */
+    #term .composition-view {
+      background: var(--accent-soft);
+      color: var(--accent-text);
+      text-decoration: underline;
+      text-decoration-color: var(--accent);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 2px;
+    }
 
     /* Promote the rendered terminal surface to its own GPU compositing layer so
        the DOM renderer's per-scroll row repaints composite in isolation instead
