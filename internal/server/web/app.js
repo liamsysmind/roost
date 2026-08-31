@@ -18,13 +18,25 @@
 
   let sessionID = resolveSessionID();
 
-  // UUIDs show only the leading 8-char block; named sessions show full.
+  // A session opened without a name carries a generated id, in one of two
+  // shapes: crypto.randomUUID() where it exists, and the timestamp+random
+  // fallback in resolveSessionID where it doesn't — plain http on a LAN
+  // address is not a secure context, so randomUUID is absent exactly there.
+  // Neither shape names anything.
+  const GENERATED_ID_RE = /^([0-9a-f]{8}-[0-9a-f]{4}-|\d{13}-[a-z0-9]+$)/;
+
+  // Generated ids show only their leading 8 chars; a name the user chose
+  // shows in full.
   function displayID(id) {
-    return /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(id) ? id.slice(0, 8) : id;
+    return GENERATED_ID_RE.test(id) ? id.slice(0, 8) : id;
   }
 
   function refreshSessionUI() {
-    document.title = `roost — ${displayID(sessionID)}`;
+    // The tab strip is where a name actually pays off: with a dozen roost
+    // tabs open a browser shows only the first few characters of each, so the
+    // name alone beats "roost — name". A generated id names no project, so
+    // fall back to the app name rather than spend the tab on hex digits.
+    document.title = GENERATED_ID_RE.test(sessionID) ? 'roost' : sessionID;
     tag.textContent = displayID(sessionID);
   }
 
