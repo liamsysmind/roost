@@ -307,6 +307,97 @@
     return map;
   }
 
+  // A long line occupies several buffer rows, and provideLinks is called once
+  // per row — so anything that wrapped was matched only as far as the row
+  // break. A URL split across three rows gave one truncated link on the first
+  // row and nothing at all on the other two, which is why tapping the middle
+  // of a wrapped URL did nothing. Phones hit this constantly: a narrow
+  // terminal wraps almost any real URL.
+  //
+  // xterm's isWrapped flag cannot answer this on its own. tmux never lets the
+  // terminal auto-wrap; it repositions the cursor for every row it paints
+  // (ESC[20;2H …), so each row of a wrapped line arrives as an independent
+  // line with isWrapped false. The flag is still trusted when it IS set, but
+  // the load-bearing signal is geometric: a row whose content runs into the
+  // terminal's last column was cut there rather than having ended there.
+  //
+  // Continuation rows keep the emitter's own indent — Claude Code indents its
+  // output by two columns — so their leading blanks are dropped before the
+  // join. A URL cannot contain a space, so nothing real is lost, and `skip`
+  // keeps the char-index-to-column mapping exact.
+  //
+  // The heuristic can be wrong: two unrelated rows that both happen to fill
+  // the pane exactly will be joined, and a match spanning that seam points
+  // somewhere wrong. That is the failure mode a truncated wrapped URL already
+  // had, so it trades a guaranteed wrong answer for an occasional one.
+  const MAX_WRAP_ROWS = 64;
+
+  // Content reaches the last column. colMap is used rather than string length
+  // because a wide char (CJK, emoji) is one char but two columns.
+  function fillsLastColumn(line, colMap) {
+    const trimmed = line.translateToString(false).replace(/\s+$/, '').length;
+    if (!trimmed) return false;
+    return (colMap[trimmed] || 0) - 1 >= term.cols;
+  }
+
+  function logicalLine(lineNumber) {
+    const buf = term.buffer.active;
+    const at = (y) => {
+      const l = buf.getLine(y);
+      if (!l) return null;
+      const colMap = buildColMap(l);
+      return { l, colMap, fills: fillsLastColumn(l, colMap) };
+    };
+    // Row y continues row y-1.
+    const continues = (prev, cur) => !!prev && (prev.fills || (!!cur && cur.l.isWrapped));
+
+    let startY = lineNumber - 1;
+    for (let n = 0; n < MAX_WRAP_ROWS && startY > 0; n++) {
+      if (!continues(at(startY - 1), at(startY))) break;
+      startY--;
+    }
+
+    const rows = [];
+    let text = '';
+    for (let n = 0; n < MAX_WRAP_ROWS; n++) {
+      const y = startY + n;
+      const cur = at(y);
+      if (!cur) break;
+      if (n > 0 && !continues(at(y - 1), cur)) break;
+      let t = cur.l.translateToString(false);
+      let skip = 0;
+      if (n > 0) {
+        skip = t.length - t.replace(/^\s+/, '').length;
+        t = t.slice(skip);
+      }
+      rows.push({ y: y + 1, text: t, colMap: cur.colMap, skip, offset: text.length });
+      text += t;
+    }
+    return { rows, text };
+  }
+
+  function rowAt(rows, idx) {
+    for (const r of rows) {
+      if (idx >= r.offset && idx < r.offset + r.text.length) return r;
+    }
+    return rows.length ? rows[rows.length - 1] : null;
+  }
+
+  // Map a [start, end) span of the joined text to an xterm range. start.y and
+  // end.y may differ — xterm.js supports a link spanning rows, which is what
+  // makes every row of a wrapped URL clickable.
+  function spanToRange(rows, startIdx, endIdx) {
+    const first = rowAt(rows, startIdx);
+    const last  = rowAt(rows, endIdx - 1);
+    if (!first || !last) return null;
+    const sOff = startIdx - first.offset + first.skip;
+    const eOff = endIdx - last.offset + last.skip;
+    return {
+      start: { x: first.colMap[sOff] || (sOff + 1), y: first.y },
+      end:   { x: (last.colMap[eOff] || (eOff + 1)) - 1, y: last.y },  // inclusive
+    };
+  }
+
   // The regex only says "this token is path-shaped", which is not the same as
   // "this file is here": agents quote hypothetical paths, paths in other
   // repos, and paths that existed three commits ago. Decorating those produces
@@ -323,35 +414,57 @@
   const EXIST_CACHE_MAX = 400;
   const EXIST_MAX_PATHS = 64;   // server rejects >256; a real line has a handful
 
-  async function resolveExisting(cwd, paths) {
-    const key = cwd + '\u0000' + paths.join('\u0000');
-    const hit = existCache.get(key);
-    if (hit) return hit;
-    const r = await fetch('/api/fs/exist', {
+  const existPending = new Set();
+
+  function existKey(cwd, paths) {
+    return cwd + '\u0000' + paths.join('\u0000');
+  }
+
+  // Fetches in the background and never returns anything: provideLinks must
+  // answer synchronously (see the provider below), so validation can only ever
+  // apply to a verdict that is already cached. Warming is keyed on cwd+paths
+  // rather than on the row, so the same path token seen anywhere else on
+  // screen is already answered.
+  function warmExistCache(cwd, paths) {
+    const key = existKey(cwd, paths);
+    if (existCache.has(key) || existPending.has(key)) return;
+    existPending.add(key);
+    fetch('/api/fs/exist', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cwd, paths }),
-    });
-    if (!r.ok) throw new Error('exist: HTTP ' + r.status);
-    const data = await r.json();
-    const found = new Map();
-    for (const res of (data.results || [])) {
-      if (res && res.exists && res.rel) found.set(res.input, res.rel);
-    }
-    // Crude but adequate: the cache exists to collapse repeat hovers, not to
-    // be long-lived, so drop it wholesale rather than tracking LRU order.
-    if (existCache.size >= EXIST_CACHE_MAX) existCache.clear();
-    existCache.set(key, found);
-    return found;
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data) return;
+        const found = new Map();
+        for (const res of (data.results || [])) {
+          if (res && res.exists && res.rel) found.set(res.input, res.rel);
+        }
+        // Crude but adequate: the cache collapses repeat lookups, it is not
+        // meant to be long-lived, so drop it wholesale rather than track LRU.
+        if (existCache.size >= EXIST_CACHE_MAX) existCache.clear();
+        existCache.set(key, found);
+      })
+      .catch(() => {})
+      .finally(() => existPending.delete(key));
   }
 
+  // provideLinks MUST call back synchronously. xterm.js will not adopt a later
+  // provider's link while an earlier one is still outstanding, so awaiting the
+  // validation request here delayed every link on the row — this one and the
+  // URL provider below — by a round trip. On a desktop the hover precedes the
+  // click by long enough to hide it; on a phone Safari synthesises mousemove,
+  // mousedown and mouseup inside a single tap, so the link was still
+  // unresolved when mouseup ran and the tap did nothing at all.
+  //
+  // So answer from the cache if a verdict is already there, otherwise answer
+  // with every candidate — the behaviour from before validation existed — and
+  // warm the cache for next time.
   term.registerLinkProvider({
     provideLinks(lineNumber, callback) {
-      const line = term.buffer.active.getLine(lineNumber - 1);
-      if (!line) return callback(undefined);
-      const text = line.translateToString(true);
+      const { rows, text } = logicalLine(lineNumber);
       if (!text || text.indexOf('/') < 0) return callback(undefined);
-      const colMap = buildColMap(line);
       const cands = [];
       FILE_PATH_RE.lastIndex = 0;
       let m;
@@ -367,35 +480,28 @@
       }
       if (!cands.length) return callback(undefined);
       const cwd = cwdForLine(lineNumber - 1);
+      const paths = cands.map(c => c.path);
+      const found = existCache.get(existKey(cwd, paths)) || null;
+      if (!found) warmExistCache(cwd, paths);
 
-      // found === null means validation didn't happen (request failed), so
-      // every candidate is decorated and fs.js resolves at click time — the
-      // behaviour from before this endpoint was wired up.
-      const emit = (found) => {
-        const links = [];
-        for (const c of cands) {
-          if (found && !found.has(c.path)) continue;
-          const startCol = colMap[c.startIdx] || (c.startIdx + 1);
-          const endCol   = (colMap[c.endIdx] || (c.endIdx + 1)) - 1;  // inclusive
-          const rel      = found ? found.get(c.path) : undefined;
-          links.push({
-            text: c.whole,
-            range: {
-              start: { x: startCol, y: lineNumber },
-              end:   { x: endCol,   y: lineNumber },
-            },
-            decorations: { pointerCursor: true, underline: true },
-            activate: () => {
-              window.dispatchEvent(new CustomEvent('roost-open-preview', {
-                detail: { path: c.path, line: c.lineHint, col: c.colHint, cwd, rel },
-              }));
-            },
-          });
-        }
-        callback(links.length ? links : undefined);
-      };
-
-      resolveExisting(cwd, cands.map(c => c.path)).then(emit).catch(() => emit(null));
+      const links = [];
+      for (const c of cands) {
+        if (found && !found.has(c.path)) continue;
+        const range = spanToRange(rows, c.startIdx, c.endIdx);
+        if (!range) continue;
+        const rel = found ? found.get(c.path) : undefined;
+        links.push({
+          text: c.whole,
+          range,
+          decorations: { pointerCursor: true, underline: true },
+          activate: () => {
+            window.dispatchEvent(new CustomEvent('roost-open-preview', {
+              detail: { path: c.path, line: c.lineHint, col: c.colHint, cwd, rel },
+            }));
+          },
+        });
+      }
+      callback(links.length ? links : undefined);
     },
   });
 
@@ -414,11 +520,8 @@
     /\bhttps?:\/\/[^\s<>"'`\u3000-\u303f\uff01-\uff0f\uff1a-\uff20\uff3b-\uff40\uff5b-\uff65]+/g;
   term.registerLinkProvider({
     provideLinks(lineNumber, callback) {
-      const line = term.buffer.active.getLine(lineNumber - 1);
-      if (!line) return callback(undefined);
-      const text = line.translateToString(true);
+      const { rows, text } = logicalLine(lineNumber);
       if (!text || text.indexOf('://') < 0) return callback(undefined);
-      const colMap = buildColMap(line);
       const links = [];
       URL_RE.lastIndex = 0;
       let m;
@@ -427,16 +530,11 @@
         // "(https://x.com)" don't drag the period / paren into the URL.
         const url = m[0].replace(/[.,;:!?)\]}'"]+$/, '');
         if (!url) continue;
-        const startIdx = m.index;
-        const endIdx   = m.index + url.length;
-        const startCol = colMap[startIdx] || (startIdx + 1);
-        const endCol   = (colMap[endIdx] || (endIdx + 1)) - 1;  // inclusive
+        const range = spanToRange(rows, m.index, m.index + url.length);
+        if (!range) continue;
         links.push({
           text: url,
-          range: {
-            start: { x: startCol, y: lineNumber },
-            end:   { x: endCol,   y: lineNumber },
-          },
+          range,
           decorations: { pointerCursor: true, underline: true },
           // noopener/noreferrer: the opened page gets no handle back to roost.
           activate: () => { window.open(url, '_blank', 'noopener,noreferrer'); },
