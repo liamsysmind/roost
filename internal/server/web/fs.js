@@ -365,6 +365,112 @@
     });
   }
 
+  // Highlighting the whole file at once is what makes it correct — a block
+  // comment or template literal opens on one line and closes on another — but
+  // it also means the result cannot be split on '\n' as a string without
+  // tearing those spans in half. Walk the DOM instead: start a fresh line at
+  // every newline and re-open the chain of spans that was open across it, so
+  // each source line ends up self-contained.
+  function splitHighlightedLines(root) {
+    const out = [];
+    const chain = [];            // source elements currently open
+    let clones = [];             // their counterparts on the line being built
+    let line = document.createElement('span');
+    const tip = () => (clones.length ? clones[clones.length - 1] : line);
+
+    const startLine = () => {
+      out.push(line);
+      line = document.createElement('span');
+      clones = [];
+      for (const el of chain) {
+        const c = el.cloneNode(false);
+        tip().appendChild(c);
+        clones.push(c);
+      }
+    };
+
+    (function walk(node) {
+      for (const child of node.childNodes) {
+        if (child.nodeType === Node.TEXT_NODE) {
+          const parts = child.data.split('\n');
+          for (let i = 0; i < parts.length; i++) {
+            if (i > 0) startLine();
+            if (parts[i]) tip().appendChild(document.createTextNode(parts[i]));
+          }
+        } else if (child.nodeType === Node.ELEMENT_NODE) {
+          const c = child.cloneNode(false);
+          tip().appendChild(c);
+          chain.push(child);
+          clones.push(c);
+          walk(child);
+          chain.pop();
+          clones.pop();
+        }
+      }
+    })(root);
+    out.push(line);
+    return out;
+  }
+
+  // Past this size highlighting is slower than it is worth and can lock the
+  // tab up; the preview cap is 8 MB, and a minified bundle is the exact shape
+  // that hits both limits at once. The file still renders, just unpainted.
+  const HIGHLIGHT_MAX_CHARS = 512 * 1024;
+
+  // One grid row per source line: a gutter cell and a content cell. The
+  // content cell wraps, so a long line grows its row and the number stays
+  // beside the line's first visual row instead of drifting out of step, which
+  // is what a single shared <pre> could not do. Wrapping is unconditional —
+  // a file with no newlines at all is otherwise a single line of horizontal
+  // scrolling, which is unusable on a phone.
+  function renderCodeView(container, txt, name) {
+    const lines = txt.split('\n');
+    // A trailing newline is a terminator, not an empty last line.
+    if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+
+    let painted = null;
+    if (window.hljs && txt.length <= HIGHLIGHT_MAX_CHARS) {
+      try {
+        const lang = extToLang(name);
+        const html = lang
+          ? hljs.highlight(txt, { language: lang, ignoreIllegals: true }).value
+          : hljs.highlightAuto(txt).value;
+        const holder = document.createElement('div');
+        holder.innerHTML = html;
+        const split = splitHighlightedLines(holder);
+        if (split.length > 1 && split[split.length - 1].textContent === '') split.pop();
+        // If the split didn't land on the same line count the markup and the
+        // gutter disagree, and a misnumbered file is worse than a plain one.
+        if (split.length === lines.length) painted = split;
+      } catch (_) { painted = null; }
+    }
+
+    // One plain block per line; the number is positioned out of flow inside
+    // it, so a wrapped line just grows its own block and the number stays put
+    // at the top of it. No grid, no flex — see the .codeview comment in the
+    // stylesheet for why this is deliberately dull.
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < lines.length; i++) {
+      const row = document.createElement('div');
+      row.className = 'line';
+      const ln = document.createElement('span');
+      ln.className = 'ln';
+      ln.textContent = String(i + 1);
+      row.appendChild(ln);
+      if (painted) row.appendChild(painted[i]);
+      else row.appendChild(document.createTextNode(lines[i]));
+      frag.appendChild(row);
+    }
+    const view = document.createElement('div');
+    view.className = 'codeview';
+    // ch is the advance of "0" in the current font, so the gutter is exactly
+    // wide enough for the largest line number whatever the font resolves to.
+    view.style.setProperty('--gutter', 'calc(' + String(lines.length).length + 'ch + 1rem)');
+    view.appendChild(frag);
+    container.innerHTML = '';
+    container.appendChild(view);
+  }
+
   async function openPreview(path) {
     const name = path.split('/').pop();
     pvTitleEl.textContent = path;
@@ -439,25 +545,7 @@
             });
           }
         } else {
-          // Build a line-number gutter from the raw text and render the code
-          // alongside it. Files conventionally end with a trailing newline; the
-          // resulting empty final split element isn't a real line, so drop it
-          // before counting.
-          const lines = txt.split('\n');
-          const lineCount = (lines.length > 0 && lines[lines.length - 1] === '')
-            ? lines.length - 1
-            : lines.length;
-          const gutterText = Array.from({ length: lineCount || 1 }, (_, i) => i + 1).join('\n');
-          pvBodyEl.innerHTML = '<div class="codeview"><div class="ln-gutter"></div><pre><code></code></pre></div>';
-          const gutterEl = pvBodyEl.querySelector('.ln-gutter');
-          const code = pvBodyEl.querySelector('code');
-          gutterEl.textContent = gutterText;
-          code.textContent = txt;
-          if (window.hljs) {
-            const lang = extToLang(name);
-            if (lang) code.className = 'language-' + lang;
-            try { hljs.highlightElement(code); } catch (_) {}
-          }
+          renderCodeView(pvBodyEl, txt, name);
         }
       } else {
         pvBodyEl.innerHTML = '<div class="msg">binary file (' + ct + ') — use ↓ download to save</div>';

@@ -314,35 +314,53 @@
       font-size: 0.82rem; line-height: 1.45;
       white-space: pre; tab-size: 4; overflow: auto;
     }
-    /* Code preview with line-number gutter. The gutter is position:sticky
-       inside the scrolling .codeview so it stays pinned to the left edge
-       during horizontal scroll. Both gutter and code inherit font metrics
-       from .codeview so each line in the gutter aligns with the matching
-       line in the code. */
+    /* Code preview: a two-column grid with one row per source line, rather
+       than one shared <pre> beside one shared gutter. Long lines wrap, and a
+       wrapped line grows its own grid row, so its number stays beside the
+       first visual row instead of drifting out of step with the code — which
+       is the failure a single <pre> cannot avoid. Wrapping is unconditional:
+       a file with no newlines is otherwise one endless line of sideways
+       scrolling, which is unusable on a phone. */
+    /* Deliberately boring layout. An earlier version used a grid with
+       `minmax(0, 1fr)` and `overflow-wrap: anywhere`; on iOS Safari the glyphs
+       in the left part of every wrapped row drew on top of each other. Both of
+       those affect how a browser computes min-content width, which is exactly
+       the calculation that went wrong, so neither is used here: each line is a
+       plain block, the number is taken out of flow, and the gutter strip is
+       painted by a gradient on the container so it stays continuous down a
+       wrapped row without needing a cell to stretch. --gutter is set inline by
+       renderCodeView from the width of the largest line number. */
     #preview .body .codeview {
-      flex: 1; min-width: 0; display: flex; align-items: stretch;
-      overflow: auto; background: #0a0a0a;
+      flex: 1; min-width: 0;
+      overflow: auto;
+      background:
+        linear-gradient(to right,
+          #050505 0, #050505 calc(var(--gutter) - 1px),
+          #1a1a1a calc(var(--gutter) - 1px), #1a1a1a var(--gutter),
+          #0a0a0a var(--gutter));
+      background-attachment: local;
       font-family: ui-monospace, "JetBrains Mono", Menlo, monospace;
       font-size: 0.82rem; line-height: 1.45;
     }
-    #preview .body .codeview .ln-gutter {
-      position: sticky; left: 0;
-      padding: 0.6rem 0.6rem 0.6rem 0.8rem;
-      color: #555; background: #050505;
-      border-right: 1px solid #1a1a1a;
-      text-align: right; user-select: none; flex-shrink: 0;
-      white-space: pre; tab-size: 4;
-      font: inherit;
+    #preview .body .codeview .line {
+      position: relative;
+      padding-left: calc(var(--gutter) + 0.5rem);
+      padding-right: 0.6rem;
+      /* An empty line still has to occupy a row, or the numbers drift. */
+      min-height: calc(0.82rem * 1.45);
+      color: #e6e6e6;
+      white-space: pre-wrap;
+      overflow-wrap: break-word;
+      tab-size: 4;
     }
-    #preview .body .codeview > pre {
-      flex: 1; margin: 0; padding: 0.6rem 0.9rem;
-      color: #e6e6e6; overflow: visible;
-      white-space: pre; tab-size: 4;
-      font: inherit; background: transparent;
-    }
-    #preview .body .codeview > pre > code,
-    #preview .body .codeview > pre > code.hljs {
-      background: transparent !important; padding: 0 !important;
+    #preview .body .codeview .ln {
+      position: absolute; left: 0; top: 0;
+      width: var(--gutter);
+      padding-right: 0.5rem;
+      box-sizing: border-box;
+      text-align: right; color: #555;
+      user-select: none;
+      white-space: pre;
     }
     #preview .body img, #preview .body video {
       max-width: 100%; max-height: 100%; margin: auto; display: block; object-fit: contain;
