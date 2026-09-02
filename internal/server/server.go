@@ -8,6 +8,7 @@ import (
 	"html"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -435,6 +436,17 @@ func (s *Server) handleNotifyPost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) Run() error {
-	log.Printf("roost listening on http://%s", s.Addr)
-	return http.ListenAndServe(s.Addr, s.handler)
+	// Bind before announcing. ListenAndServe does both in one call, so the
+	// success line was printed before the bind was even attempted — starting a
+	// second instance on a taken port produced "roost listening on …" followed
+	// by "bind: address already in use", which reads as a server that came up
+	// and then fell over rather than one that never started.
+	ln, err := net.Listen("tcp", s.Addr)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", s.Addr, err)
+	}
+	// ln.Addr() rather than s.Addr so a port of 0, or a bare ":8080", reports
+	// what was actually bound.
+	log.Printf("roost listening on http://%s", ln.Addr())
+	return http.Serve(ln, s.handler)
 }
