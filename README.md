@@ -262,7 +262,7 @@ root = ""                     # default: your home directory.
 
 ```bash
 mkdir -p ~/.config/systemd/user
-cp dist/systemd/roost.service ~/.config/systemd/user/
+cp contrib/systemd/roost.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now roost
 ```
@@ -317,10 +317,43 @@ journalctl --user -u roost -n 100        # last 100 lines
 
 ### macOS (launchd)
 
+Ships as a **LaunchDaemon**, not a LaunchAgent: an agent only runs once
+someone has logged in graphically, which is the wrong shape for a box you
+reach over SSH or a tunnel. A daemon starts at boot and survives logout.
+
 ```bash
-cp dist/launchd/com.liamsysmind.roost.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.liamsysmind.roost.plist
+sudo cp contrib/launchd/com.liamsysmind.roost.plist /Library/LaunchDaemons/
+sudo chown root:wheel /Library/LaunchDaemons/com.liamsysmind.roost.plist
+# edit it first: replace YOUR-USER and YOUR-HOME, and point ProgramArguments
+# at the binary — launchd expands neither ~ nor $HOME anywhere in a plist
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.liamsysmind.roost.plist
 ```
+
+Two settings in it are load-bearing, and both fail in ways that don't look
+like a service problem:
+
+- **`PATH`** — a launchd job starts with `/usr/bin:/bin:/usr/sbin:/sbin`,
+  which has no `tmux`. roost refuses to start without it, so Homebrew's bin
+  is named explicitly (`/opt/homebrew/bin` on Apple silicon, `/usr/local/bin`
+  on Intel).
+- **`LANG`** — a launchd job inherits no locale. Without it `tmux` comes up
+  in the C locale, leaves UTF-8 mode, and every non-ASCII character in the
+  terminal turns to garbage.
+
+Useful commands:
+
+```bash
+sudo launchctl print system/com.liamsysmind.roost   # state, pid, last exit
+sudo launchctl kickstart -k system/com.liamsysmind.roost  # restart after rebuilding
+sudo launchctl bootout system/com.liamsysmind.roost # stop (a plain kill just
+                                                    # earns an instant respawn)
+tail -f ~/Library/Logs/roost.err.log                # the log
+```
+
+`KeepAlive` means a bare `kill` is not how you stop it — the job comes
+straight back, and if you then start roost by hand the two fight over the
+port. `bind: address already in use` repeating every ten seconds in
+`roost.err.log` is that fight, one line per `ThrottleInterval`.
 
 ---
 

@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  roost as a macOS LaunchDaemon.
+
+  A daemon rather than a LaunchAgent on purpose: an agent in the gui domain
+  only runs once someone has logged in graphically, which is the wrong shape
+  for a box you reach over SSH or a tunnel. A daemon starts at boot and
+  survives logout.
+
+  Replace YOUR-USER and YOUR-HOME throughout — launchd expands neither ~ nor
+  $HOME anywhere in this file — then:
+
+      sudo cp com.liamsysmind.roost.plist /Library/LaunchDaemons/
+      sudo chown root:wheel /Library/LaunchDaemons/com.liamsysmind.roost.plist
+      sudo launchctl bootstrap system /Library/LaunchDaemons/com.liamsysmind.roost.plist
+
+  To stop it (a plain `kill` only earns an instant restart from KeepAlive):
+
+      sudo launchctl bootout system/com.liamsysmind.roost
+
+  After rebuilding the binary, restart in place:
+
+      sudo launchctl kickstart -k system/com.liamsysmind.roost
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.liamsysmind.roost</string>
+
+    <!-- Point this at wherever the binary lives. A checkout path works and
+         means each `make build` is picked up on the next restart. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/roost</string>
+        <string>serve</string>
+    </array>
+
+    <!-- Without UserName a daemon runs as root, and roost would then read
+         root's ~/.config/roost and serve root's home. -->
+    <key>UserName</key>
+    <string>YOUR-USER</string>
+    <key>GroupName</key>
+    <string>staff</string>
+
+    <key>WorkingDirectory</key>
+    <string>YOUR-HOME</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- launchd starts a job with PATH=/usr/bin:/bin:/usr/sbin:/sbin,
+             which contains no tmux. roost refuses to start without tmux, so
+             Homebrew's bin has to be named explicitly: /opt/homebrew/bin on
+             Apple silicon, /usr/local/bin on Intel. -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <!-- UserName sets the uid but not HOME, and roost resolves
+             ~/.config/roost and ~/.local/share/roost from it. -->
+        <key>HOME</key>
+        <string>YOUR-HOME</string>
+        <!-- A launchd job inherits no locale. Without this tmux comes up in
+             the C locale, leaves UTF-8 mode, and every non-ASCII character in
+             the terminal turns to garbage. -->
+        <key>LANG</key>
+        <string>en_US.UTF-8</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart on any exit. ThrottleInterval keeps a binary that dies at
+         startup — bad config, port already taken — from respawning in a tight
+         loop; the failures land in StandardErrorPath ten seconds apart. -->
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>YOUR-HOME/Library/Logs/roost.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>YOUR-HOME/Library/Logs/roost.err.log</string>
+</dict>
+</plist>

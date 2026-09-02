@@ -1,0 +1,22 @@
+# roost as a systemd user unit. Copy to ~/.config/systemd/user/, then:
+#
+#     systemctl --user daemon-reload
+#     systemctl --user enable --now roost
+#
+# Run `sudo loginctl enable-linger $USER` as well, or the unit dies with your
+# last SSH session — a user-mode unit is not tied to the machine, it is tied to
+# your login.
+[Unit]
+Description=roost — self-hosted workspace for AI agents
+After=default.target
+
+[Service]
+Type=simple
+# Assumes `sudo make install`. Point this at a checkout path instead if you
+# would rather not install to /usr/local/bin.
+ExecStart=/usr/local/bin/roost serve
+Restart=on-failure
+RestartSec=3s
+
+[Install]
+WantedBy=default.target
