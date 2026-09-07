@@ -413,7 +413,7 @@
   }
 
   // Past this size highlighting is slower than it is worth and can lock the
-  // tab up; the preview cap is 8 MB, and a minified bundle is the exact shape
+  // tab up; the preview cap is 32 MB, and a minified bundle is the exact shape
   // that hits both limits at once. The file still renders, just unpainted.
   const HIGHLIGHT_MAX_CHARS = 512 * 1024;
 

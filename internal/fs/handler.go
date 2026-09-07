@@ -67,7 +67,7 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 // Content-Type is chosen by extension first, then sniffed from the body
 // (http.DetectContentType) so extensionless binaries don't masquerade as
 // text. Response is capped so the browser can't choke on huge files.
-const previewMaxBytes = 8 << 20 // 8 MB
+const previewMaxBytes = 32 << 20 // 32 MB
 
 func (h *Handler) handlePreview(w http.ResponseWriter, r *http.Request) {
 	rel := r.URL.Query().Get("path")
