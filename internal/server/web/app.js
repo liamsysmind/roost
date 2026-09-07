@@ -244,7 +244,13 @@
   // noisy enough that whitelisting "looks like a real path" is the safer
   // default. The lookbehind blocks matches inside URLs (chars before would
   // be ':' or '/') and inside longer paths.
-  const FILE_PATH_RE = /(?<![\w./:])((?:\.{1,2}|~)?\/[\w.~-]+(?:\/[\w.~-]+)*|[\w.~-]+(?:\/[\w.~-]+)+)(?::(\d+)(?::(\d+))?)?/g;
+  // \p{L}\p{N} rather than \w, which in JavaScript is only [A-Za-z0-9_]: a
+  // filename like "10-病程紀錄-有版本.png" made the match stop dead at the
+  // first Han character, leaving "/Users/me/shots/10-" — a path that does not
+  // exist, so validation dropped it and the line carried no link at all.
+  // Letters and numbers of every script are in; punctuation stays out, so a
+  // path followed by a full-width comma still ends where it should.
+  const FILE_PATH_RE = /(?<![\p{L}\p{N}_./:])((?:\.{1,2}|~)?\/[\p{L}\p{N}_.~-]+(?:\/[\p{L}\p{N}_.~-]+)*|[\p{L}\p{N}_.~-]+(?:\/[\p{L}\p{N}_.~-]+)+)(?::(\d+)(?::(\d+))?)?/gu;
 
   // A relative path is only meaningful against the cwd that was in effect when
   // the line was PRINTED, which is not necessarily the cwd now. Resolving every
