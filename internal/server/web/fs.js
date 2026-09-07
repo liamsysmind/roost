@@ -691,9 +691,24 @@
   previewEl.addEventListener('click', (e) => {
     if (e.target === previewEl) closePreview();
   });
+  // Capture phase, and the event stops here. xterm.js holds keyboard focus
+  // whenever the terminal does, and it acts on Escape by writing \x1b to the
+  // PTY — so a bubble-phase listener either never runs at all, or closes the
+  // preview only after the agent in the terminal has already been interrupted.
+  // The confirm dialog further down already listens this way; the preview was
+  // the one place still on the bubble.
+  //
+  // Yield to that dialog when both are open — deleting a file while previewing
+  // it. Capture listeners on the same target fire in registration order and
+  // this one is registered first, so without the check Escape would dismiss
+  // the preview instead of the dialog that asked the question.
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && previewEl.classList.contains('open')) closePreview();
-  });
+    if (e.key !== 'Escape' || !previewEl.classList.contains('open')) return;
+    if (confEl && confEl.classList.contains('open')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    closePreview();
+  }, true);
 
   function reportError(prefix, e) {
     const msg = prefix + ': ' + e.message;
