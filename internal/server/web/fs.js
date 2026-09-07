@@ -286,6 +286,7 @@
   const pvBodyEl   = previewEl.querySelector('.body');
   const pvDlEl     = previewEl.querySelector('.dl');
   const pvCloseEl  = previewEl.querySelector('.close');
+  const pvModeEl   = previewEl.querySelector('.mode');
 
   // Map file extension → highlight.js language id. Anything not in here
   // falls through to hljs auto-detect, which is usually fine but slower.
@@ -328,12 +329,13 @@
     return 'binary';
   }
 
-  // Resolve an `src` from a markdown file (located at `mdPath`, relative to
-  // the fs root) into an absolute fs-root-relative path. Returns null for
-  // external URLs (http://…, data:, mailto:, etc.), which the caller should
-  // leave alone. Handles "/abs", "rel/file", "./rel", and "../parent" forms,
-  // and collapses .. segments lexically.
-  function resolveMarkdownRelative(mdPath, src) {
+  // Resolve a reference found inside a file (located at `fromPath`, relative
+  // to the fs root) into an absolute fs-root-relative path. Returns null for
+  // anything the caller must leave alone: external URLs (http://…, data:,
+  // mailto:), protocol-relative //host, and bare #fragments. Handles "/abs",
+  // "rel/file", "./rel" and "../parent", collapsing .. lexically. Used for
+  // markdown images and for the assets an HTML preview has to inline.
+  function resolveRelativeToFile(fromPath, src) {
     if (!src) return null;
     if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith('//') || src.startsWith('#')) {
       return null;
@@ -342,8 +344,8 @@
     if (src.startsWith('/')) {
       rel = src.replace(/^\/+/, '');
     } else {
-      const baseDir = mdPath.includes('/')
-        ? mdPath.substring(0, mdPath.lastIndexOf('/'))
+      const baseDir = fromPath.includes('/')
+        ? fromPath.substring(0, fromPath.lastIndexOf('/'))
         : '';
       rel = baseDir ? baseDir + '/' + src : src;
     }
@@ -359,7 +361,7 @@
   function rewriteMarkdownAssets(root, mdPath) {
     root.querySelectorAll('img').forEach((img) => {
       const src = img.getAttribute('src');
-      const rel = resolveMarkdownRelative(mdPath, src);
+      const rel = resolveRelativeToFile(mdPath, src);
       if (rel === null) return;
       img.src = '/api/fs/preview?path=' + encodeURIComponent(rel);
     });
@@ -471,11 +473,130 @@
     container.appendChild(view);
   }
 
+  // An .html file is served as text/plain on purpose: handing it back as
+  // text/html from roost's own origin would let anything in it read the
+  // session cookie and call the API as the user. So render it in an iframe
+  // with `sandbox` but WITHOUT allow-same-origin, which puts the page in an
+  // opaque origin — scripts still run, but they cannot reach roost's cookies,
+  // its DOM, or its API.
+  //
+  // The price is that the sandboxed page's own subresource requests are
+  // cross-site with a null origin, and the session cookie is SameSite=Lax, so
+  // they arrive unauthenticated and 302 to the login page. Relative assets are
+  // therefore fetched here, by the parent, which does have the cookie, and
+  // inlined before the markup is handed over.
+  const HTML_ASSET_MAX_BYTES = 4 << 20;    // per asset
+  const HTML_ASSET_BUDGET    = 24 << 20;   // total, so one page can't eat the tab
+
+  function isHTMLName(name) {
+    return /\.(html?|xhtml)$/i.test(name);
+  }
+
+  async function fetchAssetText(rel) {
+    const r = await fetch('/api/fs/preview?path=' + encodeURIComponent(rel));
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.text();
+  }
+
+  async function fetchAssetDataURI(rel) {
+    const r = await fetch('/api/fs/preview?path=' + encodeURIComponent(rel));
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const blob = await r.blob();
+    if (blob.size > HTML_ASSET_MAX_BYTES) throw new Error('too large');
+    return await new Promise((res, rej) => {
+      const fr = new FileReader();
+      fr.onload = () => res(fr.result);
+      fr.onerror = () => rej(fr.error || new Error('read failed'));
+      fr.readAsDataURL(blob);
+    });
+  }
+
+  // Stylesheets and scripts are inlined as elements rather than as data: URIs
+  // because the preview endpoint labels .css and .js as text/plain, and a
+  // stylesheet served as text/plain is ignored in standards mode. Images keep
+  // the data: URI, where the endpoint's own content-type is correct.
+  async function inlineHTMLAssets(doc, htmlPath) {
+    let budget = HTML_ASSET_BUDGET;
+    const spend = (n) => (budget -= n) >= 0;
+
+    const jobs = [];
+
+    doc.querySelectorAll('link[rel~="stylesheet"][href]').forEach((el) => {
+      const rel = resolveRelativeToFile(htmlPath, el.getAttribute('href'));
+      if (rel === null) return;
+      jobs.push(fetchAssetText(rel).then((css) => {
+        if (!spend(css.length)) return;
+        const style = doc.createElement('style');
+        style.textContent = css;
+        el.replaceWith(style);
+      }).catch(() => {}));
+    });
+
+    doc.querySelectorAll('script[src]').forEach((el) => {
+      const rel = resolveRelativeToFile(htmlPath, el.getAttribute('src'));
+      if (rel === null) return;
+      jobs.push(fetchAssetText(rel).then((js) => {
+        if (!spend(js.length)) return;
+        el.removeAttribute('src');
+        el.textContent = js;
+      }).catch(() => {}));
+    });
+
+    doc.querySelectorAll('img[src], source[src], video[poster], audio[src], video[src]').forEach((el) => {
+      const attr = el.hasAttribute('src') ? 'src' : 'poster';
+      const rel = resolveRelativeToFile(htmlPath, el.getAttribute(attr));
+      if (rel === null) return;
+      jobs.push(fetchAssetDataURI(rel).then((uri) => {
+        if (!spend(uri.length)) return;
+        el.setAttribute(attr, uri);
+      }).catch(() => {}));
+    });
+
+    await Promise.all(jobs);
+  }
+
+  async function renderHTMLPreview(container, txt, htmlPath) {
+    // DOMParser builds a detached document: no scripts run and no subresources
+    // are fetched, so rewriting happens before anything in the file executes.
+    const doc = new DOMParser().parseFromString(txt, 'text/html');
+    try {
+      await inlineHTMLAssets(doc, htmlPath);
+    } catch (_) { /* a missing asset is not worth failing the whole preview */ }
+
+    const frame = document.createElement('iframe');
+    // allow-scripts so a page with its own behaviour still works; no
+    // allow-same-origin, which is what keeps the opaque origin. allow-popups
+    // so a link in the page can still open, in a tab of its own.
+    frame.setAttribute('sandbox', 'allow-scripts allow-popups');
+    frame.setAttribute('referrerpolicy', 'no-referrer');
+    frame.srcdoc = '<!doctype html>' + doc.documentElement.outerHTML;
+    container.innerHTML = '';
+    container.appendChild(frame);
+  }
+
+  // Remembered so the source/rendered button can re-render without refetching.
+  let pvHTML = null;   // { path, txt, mode }
+
+  pvModeEl.addEventListener('click', async () => {
+    if (!pvHTML) return;
+    if (pvHTML.mode === 'rendered') {
+      pvHTML.mode = 'source';
+      pvModeEl.textContent = 'rendered';
+      renderCodeView(pvBodyEl, pvHTML.txt, pvHTML.path.split('/').pop());
+    } else {
+      pvHTML.mode = 'rendered';
+      pvModeEl.textContent = 'source';
+      await renderHTMLPreview(pvBodyEl, pvHTML.txt, pvHTML.path);
+    }
+  });
+
   async function openPreview(path) {
     const name = path.split('/').pop();
     pvTitleEl.textContent = path;
     pvDlEl.href = '/api/fs/download?path=' + encodeURIComponent(path);
     pvBodyEl.innerHTML = '<div class="msg">loading…</div>';
+    pvHTML = null;
+    pvModeEl.hidden = true;
     previewEl.classList.add('open');
 
     const url = '/api/fs/preview?path=' + encodeURIComponent(path);
@@ -526,7 +647,12 @@
         const r = await fetch(url);
         const txt = await r.text();
         const isMarkdown = /\.(md|markdown|mdown|mkd)$/i.test(name);
-        if (isMarkdown && window.marked) {
+        if (isHTMLName(name)) {
+          pvHTML = { path, txt, mode: 'rendered' };
+          pvModeEl.hidden = false;
+          pvModeEl.textContent = 'source';
+          await renderHTMLPreview(pvBodyEl, txt, path);
+        } else if (isMarkdown && window.marked) {
           // Trusted single-user filesystem — render markdown as-is.
           // If we ever expand to multi-user, swap in DOMPurify here.
           window.marked.setOptions({ gfm: true, breaks: false });
