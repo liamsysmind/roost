@@ -530,9 +530,15 @@ func (m *Manager) Shutdown() {
 		s.Close()
 	}
 	m.sessions = nil
-	if m.tmuxConfPath != "" {
-		_ = os.Remove(m.tmuxConfPath)
-	}
+	// The conf path is deliberately shared between every Manager this user
+	// runs — the UID is in the filename precisely so two people don't collide
+	// on one host, which means two Managers of the SAME user land on the same
+	// file. Removing it here therefore pulls the file out from under any other
+	// instance still running: a `go test ./internal/session/` while roost is
+	// up left the live server unable to start new sessions, because every
+	// `tmux -f <path>` after that pointed at nothing. No instance can know it
+	// is the last one, so none of them deletes. The file is 251 bytes in a
+	// temp directory the OS reclaims, and it is rewritten at every startup.
 }
 
 func (m *Manager) gcLoop() {
