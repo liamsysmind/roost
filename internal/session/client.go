@@ -73,7 +73,22 @@ const replayChunkSize = 64 * 1024
 // (notably Cloudflare's ~100s WebSocket idle timeout) from dropping the
 // connection while the user just stares at the terminal. Browsers respond
 // to pings transparently per the WS spec, so no JS-side cooperation needed.
-const pingInterval = 30 * time.Second
+// Variables rather than constants so a test can shrink them; nothing in
+// production reassigns them.
+var pingInterval = 30 * time.Second
+
+// pongWait is how long a connection may go without a single frame from the
+// client before it is treated as dead. Without it, a connection that died at
+// the transport layer — a phone that slept, a Wi-Fi handover, a tunnel that
+// went away — leaves ReadMessage blocked indefinitely: roost keeps the client
+// in the broadcast set and goes on queueing output at it until the OS TCP
+// keepalive gives up, which on macOS is about two hours. The "dropped N bytes"
+// line then reports a disconnection that happened long before, which makes the
+// log useless for working out when the connection actually failed.
+//
+// Comfortably over two ping intervals, so one lost ping or pong does not tear
+// down a healthy connection.
+var pongWait = 70 * time.Second
 
 // WriteLoop pumps the out channel to the WebSocket until Close is called
 // or the connection errors out. Also drives a ping ticker so connections

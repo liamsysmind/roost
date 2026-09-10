@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -59,12 +60,23 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request) {
 
 	go client.WriteLoop()
 
+	// Liveness. WriteLoop already sends a ping every pingInterval; browsers
+	// answer it transparently. This is the other half: if nothing at all comes
+	// back within pongWait the read fails, Serve returns, and the deferred
+	// Close tears the client out of the broadcast set. Any frame counts as
+	// proof of life — a pong, a keystroke, a resize.
+	_ = conn.SetReadDeadline(time.Now().Add(pongWait))
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(pongWait))
+	})
+
 	// Reader loop blocks here until the client disconnects.
 	for {
 		mt, data, err := conn.ReadMessage()
 		if err != nil {
 			return
 		}
+		_ = conn.SetReadDeadline(time.Now().Add(pongWait))
 		switch mt {
 		case websocket.BinaryMessage:
 			if err := s.Input(data); err != nil {
