@@ -11,6 +11,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // tmuxConfBasename is the deterministic filename used for the embedded tmux
@@ -412,25 +414,58 @@ type Info struct {
 }
 
 // ValidateID rejects names that could escape the session log directory or
-// otherwise misbehave on disk. The allowed character class matches what
-// the home page UI lets users type.
+// that tmux will not store verbatim.
+//
+// This used to be an ASCII whitelist, which meant a session could not be named
+// in the language its owner actually works in. The id becomes a tmux session
+// name and a log filename, and both handle UTF-8 fine — "病歷系統" round-trips
+// through tmux unchanged — so the rule is now a list of what is genuinely
+// unsafe rather than a list of what is Latin.
+//
+// Rejected, and why each one has to be:
+//
+//   - '/' and '\\' — the id is joined onto the log directory, so a separator
+//     is a way out of it. filepath.Join would clean "../" for us, but not
+//     before ValidateID is the thing standing between a URL and the disk.
+//   - '.' and ':' — tmux silently rewrites both to '_' in a session name.
+//     The session is created, but every later "-t =id" exact-match lookup
+//     misses it, so PaneInfo, Cwd and kill all quietly do nothing. The old
+//     whitelist allowed '.', which is exactly this bug.
+//   - whitespace — round-trips through tmux, but makes the id awkward
+//     everywhere else (URLs, shell quoting) for no gain; the UI folds runs of
+//     it to '-' instead.
+//   - control and invisible characters — a name carrying a bidi override or a
+//     zero-width space renders identically to another one, which is a way to
+//     make two different sessions look like the same session.
+//
+// Length is capped in bytes as well as runes: the log filename is the id plus
+// ".log", and a filesystem's per-name limit is a byte count, which 128 runes
+// of CJK would blow through.
 func ValidateID(id string) error {
 	if id == "" {
 		return errors.New("session name must be non-empty")
 	}
-	if len(id) > 128 {
-		return errors.New("session name too long (max 128 chars)")
+	if utf8.RuneCountInString(id) > 128 {
+		return errors.New("session name too long (max 128 characters)")
+	}
+	if len(id) > 200 {
+		return errors.New("session name too long (max 200 bytes)")
 	}
 	if id == "." || id == ".." {
 		return errors.New("invalid session name")
 	}
 	for _, r := range id {
-		ok := r == '-' || r == '_' || r == '.' ||
-			(r >= 'a' && r <= 'z') ||
-			(r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9')
-		if !ok {
-			return fmt.Errorf("session name contains invalid character %q (allowed: A-Z a-z 0-9 . _ -)", r)
+		switch {
+		case r == '/' || r == '\\':
+			return fmt.Errorf("session name may not contain %q", r)
+		case r == '.' || r == ':':
+			return fmt.Errorf("session name may not contain %q — tmux rewrites it to _", r)
+		case unicode.IsSpace(r):
+			return errors.New("session name may not contain spaces")
+		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == '\ufeff':
+			return errors.New("session name contains an invisible character")
+		case r == utf8.RuneError:
+			return errors.New("session name is not valid UTF-8")
 		}
 	}
 	return nil
