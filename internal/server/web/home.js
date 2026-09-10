@@ -20,8 +20,16 @@
     return Math.floor(s / 86400) + 'd ago';
   }
 
+  // Mirrors ValidateID on the server. Everything the server rejects is folded
+  // to '-' here rather than sent and bounced: path separators, the '.' and ':'
+  // that tmux silently rewrites to '_', whitespace, and control or invisible
+  // characters. Letters of every script survive, so a session can be named in
+  // the language its owner works in.
+  const FORBIDDEN_IN_NAME =
+    /[\/\\.:\s\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]+/gu;
+
   function sanitizeName(s) {
-    return s.trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+    return s.trim().replace(FORBIDDEN_IN_NAME, '-').replace(/^-+|-+$/g, '');
   }
 
   // Session IDs are validated on creation, but the orphan-log branch in the
@@ -37,7 +45,16 @@
     const raw = prompt(`Rename "${oldID}" to:`, oldID);
     if (raw === null) return;
     const to = sanitizeName(raw);
-    if (!to || to === oldID) return;
+    if (!to) {
+      window.toast && window.toast('That name is empty once / \\ . : and spaces are removed', 'err');
+      return;
+    }
+    if (to === oldID) {
+      if (to !== raw.trim()) {
+        window.toast && window.toast(`"${raw.trim()}" becomes "${to}", which is the current name`, 'err');
+      }
+      return;
+    }
     const r = await fetch(`/api/sessions/${encodeURIComponent(oldID)}/rename`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

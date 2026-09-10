@@ -487,9 +487,13 @@ func (m *Manager) Rename(oldID, newID string) error {
 	if _, exists := m.sessions[newID]; exists {
 		return fmt.Errorf("name %q already in use", newID)
 	}
+	// A log file on disk is not a leftover: List() surfaces every *.log in the
+	// directory as a session you can reopen, so the name really is taken — by a
+	// closed session rather than a running one. Refusing is right; the old
+	// message just didn't say what to do about it.
 	newLog := filepath.Join(m.cfg.LogDir, newID+".log")
 	if _, err := os.Stat(newLog); err == nil {
-		return fmt.Errorf("name %q already in use (log file exists)", newID)
+		return fmt.Errorf("name %q belongs to a closed session — delete it from the sessions list first", newID)
 	}
 
 	// Rename the underlying tmux session too. Without this every tmux-keyed

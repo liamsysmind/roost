@@ -60,8 +60,16 @@
   // Rename — keeps the WebSocket alive because the server just re-keys
   // the existing *Session struct, no reconnect required. We just need to
   // update the browser's URL and our local sessionID.
+  // Mirrors ValidateID on the server. Everything the server rejects is folded
+  // to '-' here rather than sent and bounced: path separators, the '.' and ':'
+  // that tmux silently rewrites to '_', whitespace, and control or invisible
+  // characters. Letters of every script survive, so a session can be named in
+  // the language its owner works in.
+  const FORBIDDEN_IN_NAME =
+    /[\/\\.:\s\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]+/gu;
+
   function sanitizeName(s) {
-    return s.trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+    return s.trim().replace(FORBIDDEN_IN_NAME, '-').replace(/^-+|-+$/g, '');
   }
 
   const renameBtn = document.getElementById('session-rename');
@@ -69,7 +77,19 @@
     const raw = prompt(`Rename session\nCurrent: ${sessionID}\nNew:`, sessionID);
     if (raw === null) return;
     const to = sanitizeName(raw);
-    if (!to || to === sessionID) return;
+    // Say why nothing happened. Sanitising can empty a name outright — a name
+    // made only of separators, say — and returning in silence looked exactly
+    // like a broken button.
+    if (!to) {
+      window.toast && window.toast('That name is empty once / \\ . : and spaces are removed', 'err');
+      return;
+    }
+    if (to === sessionID) {
+      if (to !== raw.trim()) {
+        window.toast && window.toast(`"${raw.trim()}" becomes "${to}", which is the current name`, 'err');
+      }
+      return;
+    }
     try {
       const r = await fetch(`/api/sessions/${encodeURIComponent(sessionID)}/rename`, {
         method: 'POST',
