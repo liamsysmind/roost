@@ -84,6 +84,7 @@
       if (!j || !j.file) {
         modelTag.textContent = '—';
         ctxTag.textContent = '—';
+        ctxTag.title = 'Context tokens used on the latest turn';
         projectEl.textContent = '—';
         modelFull.textContent = '—';
         ctxDetail.textContent = '—';
@@ -95,13 +96,23 @@
         return;
       }
       const ctx = j.context_tokens || 0;
+      // Codex records the model's window in every token_count, so the figure
+      // can be shown as the fraction it is. Claude's transcript has no
+      // equivalent, so there the count stands on its own rather than being
+      // measured against a number roost would have had to invent.
+      const win = j.context_window || 0;
+      const ctxText = win ? `${fmtK(ctx)} / ${fmtK(win)}` : fmtK(ctx);
+      const ctxPct = win ? Math.round((ctx / win) * 100) : null;
 
       modelTag.textContent = shortModel(j.model);
-      ctxTag.textContent = fmtK(ctx);
+      ctxTag.textContent = ctxText;
+      ctxTag.title = ctxPct === null
+        ? 'Context tokens used on the latest turn'
+        : `Context tokens used on the latest turn — ${ctxPct}% of the model's ${fmtK(win)} window`;
 
       projectEl.textContent  = j.project || '—';
       modelFull.textContent  = j.model || '—';
-      ctxDetail.textContent  = fmtK(ctx);
+      ctxDetail.textContent  = ctxPct === null ? ctxText : `${ctxText}  (${ctxPct}%)`;
       const u = j.usage || {};
       msgsDetail.textContent = String(u.messages || 0);
       tokensDetail.textContent =

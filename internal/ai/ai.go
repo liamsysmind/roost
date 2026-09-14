@@ -326,6 +326,10 @@ type ActiveSession struct {
 	Model            string        `json:"model"`
 	Usage            Usage         `json:"usage"`
 	ContextTokens int64         `json:"context_tokens"` // input + cache_read + cache_creation on the latest assistant turn
+	// Total the model will take, when the agent records it. Codex writes it
+	// into every token_count; Claude's JSONL has no equivalent, so this stays
+	// zero there and the UI shows the count on its own.
+	ContextWindow int64         `json:"context_window,omitempty"`
 	Prompts       []PromptEntry `json:"prompts"`
 }
 

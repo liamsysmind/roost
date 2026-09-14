@@ -76,6 +76,10 @@ type codexTokenCount struct {
 				OutputTokens      int64 `json:"output_tokens"`
 				TotalTokens       int64 `json:"total_tokens"`
 			} `json:"last_token_usage"`
+			// Codex records the model's window right here, so the context
+			// figure can be shown against what it is a fraction of. Claude's
+			// JSONL carries no equivalent, which is why this is optional
+			// everywhere downstream.
 			ModelContextWindow int64 `json:"model_context_window"`
 		} `json:"info"`
 	} `json:"payload"`
@@ -193,6 +197,10 @@ func (r *CodexReader) readActive(path string, mtime time.Time, meta *codexSessio
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1<<16), 1<<22)
 	var lastUsage *codexTokenCount
+	// Counted as they go past, because out.Prompts is truncated to the 40 most
+	// recent for display. Deriving the count from that slice afterwards made
+	// every session longer than 40 turns report exactly 40.
+	var userMessages int
 	for sc.Scan() {
 		var probe struct {
 			Type string `json:"type"`
@@ -217,6 +225,7 @@ func (r *CodexReader) readActive(path string, mtime time.Time, meta *codexSessio
 			if len(preview) > 140 {
 				preview = preview[:140] + "…"
 			}
+			userMessages++
 			out.Prompts = append(out.Prompts, PromptEntry{
 				Timestamp: item.Timestamp,
 				Preview:   preview,
@@ -250,7 +259,7 @@ func (r *CodexReader) readActive(path string, mtime time.Time, meta *codexSessio
 	if len(out.Prompts) > 40 {
 		out.Prompts = out.Prompts[:40]
 	}
-	out.Usage.Messages = len(out.Prompts)
+	out.Usage.Messages = userMessages
 	if lastUsage != nil && lastUsage.Payload.Info != nil {
 		t := lastUsage.Payload.Info.TotalTokenUsage
 		l := lastUsage.Payload.Info.LastTokenUsage
@@ -262,6 +271,7 @@ func (r *CodexReader) readActive(path string, mtime time.Time, meta *codexSessio
 		// "How full is the context right now": last turn's input bytes
 		// (already includes its cached portion).
 		out.ContextTokens = l.InputTokens
+		out.ContextWindow = lastUsage.Payload.Info.ModelContextWindow
 	}
 	return out, sc.Err()
 }
