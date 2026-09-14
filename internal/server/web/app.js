@@ -583,7 +583,15 @@
   });
 
   const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsURL = `${wsProto}//${location.host}/ws/terminal/${encodeURIComponent(sessionID)}`;
+  // Computed per connect, not once. Renaming updates sessionID in place and
+  // keeps the socket, so a URL frozen at load time still named the old
+  // session — and the next reconnect, whenever the network happened to blink,
+  // dialled it. The server's GetOrCreate then did exactly what it is told to
+  // do with a name it has never seen: made a new session, and a new tmux
+  // session, under the name that was supposed to be gone.
+  function wsURL() {
+    return `${wsProto}//${location.host}/ws/terminal/${encodeURIComponent(sessionID)}`;
+  }
 
   // Auto-reconnect: transport-level WS drops are inevitable on long-lived
   // connections (laptop sleep, WiFi roam, SSH tunnel reconnect, Chrome
@@ -600,7 +608,7 @@
 
   function connect() {
     reconnectTimer = null;
-    ws = new WebSocket(wsURL);
+    ws = new WebSocket(wsURL());
     ws.binaryType = 'arraybuffer';
 
     ws.onopen = () => {
