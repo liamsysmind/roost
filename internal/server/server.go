@@ -89,6 +89,9 @@ func (s *Server) setupRoutes() {
 			c, _ := s.Sessions.Cwd(sid)
 			return c
 		},
+		PIDForSession: func(sid string) int {
+			return s.Sessions.AgentPID(sid)
+		},
 	}).Mount(mux)
 
 	mux.HandleFunc("GET /api/notify/stream", s.handleNotifyStream)
@@ -255,7 +258,7 @@ func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSessionCwd(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	cwd, cmd, app, err := s.Sessions.PaneInfo(id)
+	cwd, cmd, app, _, err := s.Sessions.PaneInfo(id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
@@ -299,7 +302,7 @@ func (s *Server) handleSessionsStatus(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func(i int, id string) {
 			defer wg.Done()
-			cwd, cmd, app, err := s.Sessions.PaneInfo(id)
+			cwd, cmd, app, _, err := s.Sessions.PaneInfo(id)
 			if err != nil {
 				return
 			}

@@ -109,7 +109,7 @@ func readFile(path string, since time.Time) (Usage, error) {
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 1<<16), 1<<22)
+	sc.Buffer(make([]byte, 1<<16), maxJSONLLine)
 	for sc.Scan() {
 		var ev rawEvent
 		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
@@ -140,7 +140,10 @@ func readFile(path string, since time.Time) (Usage, error) {
 		}
 		u.Messages++
 	}
-	return u, sc.Err()
+	if err := sc.Err(); err != nil && !partialScan(err) {
+		return u, err
+	}
+	return u, nil
 }
 
 // Total walks every project session file and returns the aggregated tokens.
@@ -295,7 +298,7 @@ func cwdFromFile(path string) string {
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 1<<16), 1<<22)
+	sc.Buffer(make([]byte, 1<<16), maxJSONLLine)
 	for sc.Scan() {
 		var ev rawEvent
 		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
@@ -319,13 +322,13 @@ func sortByModifiedDesc(s []SessionInfo) {
 // ActiveSession is the live context view of one session: model in use,
 // rolling context-window estimate, and the user prompts so far.
 type ActiveSession struct {
-	Project          string        `json:"project"`
-	Slug             string        `json:"slug"`
-	File             string        `json:"file"`
-	Modified         time.Time     `json:"modified"`
-	Model            string        `json:"model"`
-	Usage            Usage         `json:"usage"`
-	ContextTokens int64         `json:"context_tokens"` // input + cache_read + cache_creation on the latest assistant turn
+	Project       string    `json:"project"`
+	Slug          string    `json:"slug"`
+	File          string    `json:"file"`
+	Modified      time.Time `json:"modified"`
+	Model         string    `json:"model"`
+	Usage         Usage     `json:"usage"`
+	ContextTokens int64     `json:"context_tokens"` // input + cache_read + cache_creation on the latest assistant turn
 	// Total the model will take, when the agent records it. Codex writes it
 	// into every token_count; Claude's JSONL has no equivalent, so this stays
 	// zero there and the UI shows the count on its own.
@@ -343,10 +346,10 @@ type PromptEntry struct {
 // Active returns the live Claude Code session view.
 //
 //   - hintCwd != "":  only look at the jsonl directory that matches that
-//                     working directory. If nothing is there, return nil
-//                     (no Claude session for this project).
+//     working directory. If nothing is there, return nil
+//     (no Claude session for this project).
 //   - hintCwd == "":  scan every project and return the most recently
-//                     modified jsonl across the lot.
+//     modified jsonl across the lot.
 func (r *Reader) Active(hintCwd string) (*ActiveSession, error) {
 	if r.Root == "" {
 		return nil, nil
@@ -464,7 +467,7 @@ func (r *Reader) readActive(slug, file string, mtime time.Time) (*ActiveSession,
 
 	cwdSeen := false
 	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 1<<16), 1<<22)
+	sc.Buffer(make([]byte, 1<<16), maxJSONLLine)
 	for sc.Scan() {
 		var ev rawEvent
 		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
@@ -546,7 +549,10 @@ func (r *Reader) readActive(slug, file string, mtime time.Time) (*ActiveSession,
 	if len(out.Prompts) > 40 {
 		out.Prompts = out.Prompts[:40]
 	}
-	return out, sc.Err()
+	if err := sc.Err(); err != nil && !partialScan(err) {
+		return out, err
+	}
+	return out, nil
 }
 
 // isMetaUserMessage reports whether a "user" JSONL entry's content is actually

@@ -14,6 +14,10 @@ type Handler struct {
 	// ?session={id}. The returned cwd is forwarded to Reader.Active so we
 	// surface the AI session matching the terminal's working directory.
 	CwdForSession func(sessionID string) string
+	// PIDForSession, if set, gives the pid of the agent running in that
+	// session's pane. Only Codex needs it, and only because cwd cannot
+	// separate two of its sessions started in the same directory.
+	PIDForSession func(sessionID string) int
 }
 
 func (h *Handler) Mount(mux *http.ServeMux) {
@@ -38,7 +42,14 @@ func (h *Handler) handleActive(w http.ResponseWriter, r *http.Request) {
 		err error
 	)
 	if app == "codex" && h.CodexReader != nil {
-		s, err = h.CodexReader.Active(cwd)
+		// Pass the pane's agent process: two Codex sessions started in the same
+		// directory are indistinguishable by cwd, and the panel would otherwise
+		// show whichever of them wrote last.
+		pid := 0
+		if sid := r.URL.Query().Get("session"); sid != "" && h.PIDForSession != nil {
+			pid = h.PIDForSession(sid)
+		}
+		s, err = h.CodexReader.ActiveForProcess(pid, cwd)
 	} else {
 		s, err = h.Reader.Active(cwd)
 	}

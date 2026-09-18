@@ -12,12 +12,33 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
+
+// maxJSONLLine caps how long a single line may be before the scanner gives up
+// on it. One Codex rollout here holds a 4.4 MB event — a large tool result —
+// which sailed past the old 4 MB limit.
+const maxJSONLLine = 64 << 20
+
+// partialScan reports whether a scan stopped only because one line was too
+// long, rather than because the file could not be read.
+//
+// bufio.Scanner cannot resume after ErrTooLong: it stops, and every later line
+// is lost. Treating that as a hard failure meant a single oversized event
+// blanked out the whole session's activity — no prompts, no token counts, as
+// though the agent were not running at all. Returning what was read up to that
+// point degrades instead: the panel shows the session's history up to the big
+// event, which is far more use than nothing.
+func partialScan(err error) bool {
+	return errors.Is(err, bufio.ErrTooLong)
+}
 
 // CodexReader resolves the active Codex rollout file for a given cwd.
 type CodexReader struct {
@@ -83,6 +104,78 @@ type codexTokenCount struct {
 			ModelContextWindow int64 `json:"model_context_window"`
 		} `json:"info"`
 	} `json:"payload"`
+}
+
+// ActiveForProcess resolves the rollout belonging to one specific Codex
+// process, falling back to the cwd match when it cannot.
+//
+// Matching on cwd alone cannot tell two Codex sessions apart when both were
+// started in the same directory — working out of $HOME is enough to do it —
+// because session_meta agrees on everything: same cwd, same model. Active()
+// then returns whichever rollout was written to last, so the Activity panel
+// shows one session's prompts under another's terminal, and swaps between
+// them as each takes a turn.
+//
+// The process itself is the tiebreaker: Codex holds its rollout file open for
+// the life of the session.
+func (r *CodexReader) ActiveForProcess(pid int, cwd string) (*ActiveSession, error) {
+	if path := openRolloutPath(pid); path != "" {
+		meta, err := readCodexMeta(path)
+		if err == nil && meta != nil {
+			if fi, err := os.Stat(path); err == nil {
+				return r.readActive(path, fi.ModTime(), meta)
+			}
+		}
+	}
+	return r.Active(cwd)
+}
+
+// openRolloutPath returns the rollout file a process currently has open, or ""
+// when that can't be determined — no pid, the process is gone, or neither way
+// of listing its open files is available.
+//
+// Linux is read straight out of /proc/<pid>/fd, which needs no external
+// binary: a minimal server image frequently has no lsof, and roost's
+// daily-tested deployment is Linux. macOS has no /proc, so there lsof is the
+// only way in. Same reasoning as classifyPaneTree, opposite conclusion — that
+// one could use ps on both, this one cannot.
+func openRolloutPath(pid int) string {
+	if pid <= 0 {
+		return ""
+	}
+	fdDir := fmt.Sprintf("/proc/%d/fd", pid)
+	if entries, err := os.ReadDir(fdDir); err == nil {
+		for _, e := range entries {
+			target, err := os.Readlink(filepath.Join(fdDir, e.Name()))
+			if err != nil {
+				continue
+			}
+			if isRolloutPath(target) {
+				return target
+			}
+		}
+		return ""
+	}
+	out, err := exec.Command("lsof", "-p", strconv.Itoa(pid), "-Fn").Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		// -Fn prints one field per line, each prefixed by its type; "n" is the
+		// name.
+		if !strings.HasPrefix(line, "n") {
+			continue
+		}
+		if p := line[1:]; isRolloutPath(p) {
+			return p
+		}
+	}
+	return ""
+}
+
+func isRolloutPath(p string) bool {
+	return strings.HasSuffix(p, ".jsonl") &&
+		strings.HasPrefix(filepath.Base(p), "rollout-")
 }
 
 // Active returns the most recent rollout for the given cwd, with its user
@@ -161,7 +254,7 @@ func readCodexMeta(path string) (*codexSessionMeta, error) {
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 1<<16), 1<<20)
+	sc.Buffer(make([]byte, 1<<16), maxJSONLLine)
 	if !sc.Scan() {
 		return nil, errors.New("empty rollout")
 	}
@@ -195,7 +288,7 @@ func (r *CodexReader) readActive(path string, mtime time.Time, meta *codexSessio
 	}
 
 	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 1<<16), 1<<22)
+	sc.Buffer(make([]byte, 1<<16), maxJSONLLine)
 	var lastUsage *codexTokenCount
 	// Counted as they go past, because out.Prompts is truncated to the 40 most
 	// recent for display. Deriving the count from that slice afterwards made
@@ -273,7 +366,10 @@ func (r *CodexReader) readActive(path string, mtime time.Time, meta *codexSessio
 		out.ContextTokens = l.InputTokens
 		out.ContextWindow = lastUsage.Payload.Info.ModelContextWindow
 	}
-	return out, sc.Err()
+	if err := sc.Err(); err != nil && !partialScan(err) {
+		return out, err
+	}
+	return out, nil
 }
 
 // extractCodexUserText pulls a single text string out of Codex's content

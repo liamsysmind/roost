@@ -192,9 +192,9 @@ func (m *Manager) killTmuxSession(id string) {
 // it (unlike has-session / kill-session). The -u flag is required: without a
 // UTF-8 locale tmux rewrites the 0x1f delimiter to '_', leaving the three
 // fields glued together (so cwd becomes "/tmp/x_bash_42" and the split fails).
-func (m *Manager) PaneInfo(id string) (cwd, cmd, app string, err error) {
+func (m *Manager) PaneInfo(id string) (cwd, cmd, app string, agentPID int, err error) {
 	if e := ValidateID(id); e != nil {
-		return "", "", "", e
+		return "", "", "", 0, e
 	}
 	out, e := exec.Command("tmux",
 		"-u",
@@ -202,7 +202,7 @@ func (m *Manager) PaneInfo(id string) (cwd, cmd, app string, err error) {
 		"display-message", "-t", id,
 		"-p", "#{pane_current_path}\x1f#{pane_current_command}\x1f#{pane_pid}").Output()
 	if e != nil {
-		return "", "", "", e
+		return "", "", "", 0, e
 	}
 	parts := strings.SplitN(strings.TrimRight(string(out), "\n"), "\x1f", 3)
 	cwd = parts[0]
@@ -211,17 +211,29 @@ func (m *Manager) PaneInfo(id string) (cwd, cmd, app string, err error) {
 	}
 	if len(parts) == 3 {
 		if pid, perr := strconv.Atoi(strings.TrimSpace(parts[2])); perr == nil {
-			app = classifyPaneTree(pid)
+			app, agentPID = classifyPaneTree(pid)
 		}
 	}
-	return cwd, cmd, app, nil
+	return cwd, cmd, app, agentPID, nil
 }
 
 // Cwd is a thin wrapper around PaneInfo for callers that only need the cwd
 // (e.g. the AI handler resolving project paths).
 func (m *Manager) Cwd(id string) (string, error) {
-	cwd, _, _, err := m.PaneInfo(id)
+	cwd, _, _, _, err := m.PaneInfo(id)
 	return cwd, err
+}
+
+// AgentPID is the process id of the agent running in the session's pane, or 0
+// when no agent is running there. Two Codex sessions started in the same
+// directory agree on every other identifying detail, so this is what tells
+// them apart.
+func (m *Manager) AgentPID(id string) int {
+	_, _, _, pid, err := m.PaneInfo(id)
+	if err != nil {
+		return 0
+	}
+	return pid
 }
 
 // classifyPaneTree walks the descendants of panePid via `ps` and returns
@@ -234,10 +246,10 @@ func (m *Manager) Cwd(id string) (string, error) {
 //   - node launcher: process basename is "node" and the command path contains
 //     a path segment like "/claude/", "/claude-", "/claude.js", or trailing
 //     "/claude" (same for codex). A plain `node script.js` won't match.
-func classifyPaneTree(panePid int) string {
+func classifyPaneTree(panePid int) (app string, agentPID int) {
 	out, err := exec.Command("ps", "-axww", "-o", "pid=,ppid=,command=").Output()
 	if err != nil {
-		return ""
+		return "", 0
 	}
 	type rec struct {
 		ppid int
@@ -275,11 +287,14 @@ func classifyPaneTree(panePid int) string {
 			seen[c] = true
 			queue = append(queue, c)
 			if app := classifyCommand(procs[c].cmd); app != "" {
-				return app
+				// The pid matters as much as the kind: two Codex sessions started
+				// in the same directory are told apart only by which process they
+				// are.
+				return app, c
 			}
 		}
 	}
-	return ""
+	return "", 0
 }
 
 func classifyCommand(cmd string) string {
