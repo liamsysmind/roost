@@ -31,6 +31,12 @@
     return GENERATED_ID_RE.test(id) ? id.slice(0, 8) : id;
   }
 
+  // Shared with home.js and sessions.js: all three have to agree on the name,
+  // or the browser sees two different tabs rather than one.
+  function tabNameFor(id) {
+    return 'roost-session-' + encodeURIComponent(id);
+  }
+
   function refreshSessionUI() {
     // The tab strip is where a name actually pays off: with a dozen roost
     // tabs open a browser shows only the first few characters of each, so the
@@ -38,6 +44,13 @@
     // fall back to the app name rather than spend the tab on hex digits.
     document.title = GENERATED_ID_RE.test(sessionID) ? 'roost' : sessionID;
     tag.textContent = displayID(sessionID);
+    // Name the tab after its session so opening the same session from
+    // elsewhere lands here instead of making a second copy. A tab only has a
+    // name if whoever opened it supplied one, and a tab the user reached by
+    // typing the URL or by restoring a window has none — so the page names
+    // itself, which covers every way of arriving. Re-run on rename, or the
+    // name would still point at the session this tab used to be.
+    window.name = tabNameFor(sessionID);
   }
 
   const tag = document.getElementById('session-tag');

@@ -35,6 +35,12 @@
   // Session IDs are validated on creation, but the orphan-log branch in the
   // manager derives an ID straight from a filename on disk — so escape before
   // dropping it into innerHTML to keep a crafted log name out of the DOM.
+  // Must match app.js and sessions.js exactly: the browser matches tabs by
+  // this string, so a disagreement means a second tab instead of a focus.
+  function tabNameFor(id) {
+    return 'roost-session-' + encodeURIComponent(id);
+  }
+
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -98,7 +104,7 @@
       const item = document.createElement('div');
       item.className = 'item';
       item.innerHTML = `
-        <a class="link" href="/s/${encodeURIComponent(s.id)}" target="_blank" rel="noopener">
+        <a class="link" href="/s/${encodeURIComponent(s.id)}" target="${escapeHtml(tabNameFor(s.id))}">
           <div class="row">
             <span class="id ${s.closed ? 'closed' : ''}">${escapeHtml(s.id)}${s.closed ? ' (closed)' : ''}</span>
             <span class="meta">${s.clients}↔ · ${fmtSize(s.log_size_bytes)} · ${fmtAgo(s.last_used)}</span>
@@ -123,7 +129,10 @@
   function go() {
     const name = sanitizeName(nameEl.value);
     const id = name || makeID();
-    window.open('/s/' + encodeURIComponent(id), '_blank', 'noopener');
+    // No 'noopener': it makes the browser ignore the target name and open a
+    // new tab every time, which is the behaviour being removed. The opened
+    // page is roost's own, same origin, so there is nothing to withhold.
+    window.open('/s/' + encodeURIComponent(id), tabNameFor(id));
     nameEl.value = '';
     // Give the new session a moment to register before refreshing the list.
     setTimeout(load, 400);

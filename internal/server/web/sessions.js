@@ -111,7 +111,9 @@
       li.addEventListener('click', () => {
         const id = li.dataset.id;
         if (id === me) return;
-        location.href = '/s/' + encodeURIComponent(id);
+        // Focus the tab already showing this session if there is one, rather
+        // than turning this tab into a second view of it.
+        window.open('/s/' + encodeURIComponent(id), 'roost-session-' + encodeURIComponent(id));
       });
     }
 
