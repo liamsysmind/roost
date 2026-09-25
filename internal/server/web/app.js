@@ -691,14 +691,43 @@
 
   connect();
 
+  // Refit when the terminal's own box changes size, not only when the window
+  // does. The file panel is a flex sibling, so anything that changes its width
+  // narrows #term without a window resize — and xterm went on rendering at the
+  // old column count, so the right-hand columns ran underneath the panel. A
+  // ResizeObserver sees every such change: the drag handle mid-drag, content in
+  // the panel, zoom, a DevTools dock. The window listener stays as a fallback
+  // for browsers without ResizeObserver.
   let resizeTimer = null;
-  window.addEventListener('resize', () => {
+  function scheduleFit() {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
       fit.fit();
       sendResize();
     }, 80);
-  });
+  }
+  if (window.ResizeObserver) {
+    new ResizeObserver(scheduleFit).observe(termEl);
+  } else {
+    window.addEventListener('resize', scheduleFit);
+  }
+
+  // Every tab attached to a session shares one PTY, so the PTY's size is
+  // whatever the last tab to send one asked for. With a phone and a desktop
+  // both open, the phone reconnecting after sleep re-sends its narrow width and
+  // the desktop tab — whose window never changed, so it never refits — keeps
+  // rendering at its own wider width while the shell now wraps at the phone's.
+  // The tab out of view being wrong is harmless; the one in front must not be,
+  // so reclaim the size whenever this tab becomes the one being looked at.
+  // Resending an unchanged size is free: the kernel only raises SIGWINCH when
+  // the window size actually differs.
+  function reclaimSize() {
+    if (document.visibilityState !== 'visible') return;
+    fit.fit();
+    sendResize();
+  }
+  document.addEventListener('visibilitychange', reclaimSize);
+  window.addEventListener('focus', reclaimSize);
 
   function sendPty(data) {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(encoder.encode(data));
