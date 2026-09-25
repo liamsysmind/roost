@@ -90,6 +90,11 @@
       line-height: 1.2; transition: color var(--ease), border-color var(--ease), background var(--ease);
     }
     #bar .icon-btn:hover { color: var(--text); border-color: var(--accent-dim); background: var(--accent-soft); }
+    /* The pair reads as one control, so they sit flush and share a border. */
+    #bar .fontsize { display: flex; gap: 0; }
+    #bar .fontsize .icon-btn { font-family: var(--mono); }
+    #bar .fontsize .icon-btn:first-child { border-radius: var(--r) 0 0 var(--r); }
+    #bar .fontsize .icon-btn:last-child  { border-radius: 0 var(--r) var(--r) 0; margin-left: -1px; }
 
     #stage { position: absolute; top: var(--bar-h); left: 0; right: 0; bottom: 0; display: flex; }
     #term { flex: 1; min-width: 200px; background: var(--bg); }
@@ -631,7 +636,11 @@
       <button id="session-rename" class="icon-btn" title="rename this session">rename</button>
     </div>
     <div class="right">
-      <button id="fs-toggle" class="icon-btn" title="show / hide files & activity">☰</button>
+      <span class="fontsize">
+        <button id="font-dec" class="icon-btn" title="smaller terminal text">A−</button>
+        <button id="font-inc" class="icon-btn" title="larger terminal text">A+</button>
+      </span>
+      <button id="fs-toggle" class="icon-btn" title="show / hide files &amp; activity">☰</button>
       <span id="ai-model" class="tag" title="Click to open the Activity panel"
             style="color:#8aa;cursor:pointer">—</span>
       <span id="ai-ctx" class="tag" title="Context tokens used on the latest turn"

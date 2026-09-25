@@ -124,10 +124,27 @@
     }
   });
 
+  // Terminal font size. Browser zoom scales the whole page — bar, file panel,
+  // preview — when what is wanted is usually just bigger text in the terminal.
+  // Stored per browser rather than on the server: it describes this screen,
+  // not the session, and the same session opened on a phone and a desktop
+  // wants different answers. Every localStorage access is guarded because a
+  // private window throws on read as readily as on write.
+  const FONT_MIN = 9, FONT_MAX = 32, FONT_DEFAULT = 14;
+  const FONT_KEY = 'roost.fontSize';
+
+  function storedFontSize() {
+    try {
+      const n = parseInt(localStorage.getItem(FONT_KEY), 10);
+      if (Number.isFinite(n) && n >= FONT_MIN && n <= FONT_MAX) return n;
+    } catch (_) {}
+    return FONT_DEFAULT;
+  }
+
   const term = new Terminal({
     cursorBlink: true,
     fontFamily: 'ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans Mono CJK SC", "Noto Sans CJK SC", "WenQuanYi Micro Hei Mono", monospace',
-    fontSize: 14,
+    fontSize: storedFontSize(),
     scrollback: 100000,
     theme: {
       background: '#000000',
@@ -721,6 +738,26 @@
   // so reclaim the size whenever this tab becomes the one being looked at.
   // Resending an unchanged size is free: the kernel only raises SIGWINCH when
   // the window size actually differs.
+  function setFontSize(n) {
+    const size = Math.min(FONT_MAX, Math.max(FONT_MIN, n));
+    term.options.fontSize = size;
+    try { localStorage.setItem(FONT_KEY, String(size)); } catch (_) {}
+    // A different glyph size means a different number of glyphs fit, so the
+    // terminal has to be re-measured and the PTY told; without this the shell
+    // goes on wrapping at the column count of the old size.
+    fit.fit();
+    sendResize();
+    decBtn.disabled = size <= FONT_MIN;
+    incBtn.disabled = size >= FONT_MAX;
+    decBtn.title = incBtn.title = `terminal text size: ${size}px`;
+  }
+
+  const decBtn = document.getElementById('font-dec');
+  const incBtn = document.getElementById('font-inc');
+  decBtn.addEventListener('click', () => setFontSize(term.options.fontSize - 1));
+  incBtn.addEventListener('click', () => setFontSize(term.options.fontSize + 1));
+  setFontSize(storedFontSize());
+
   function reclaimSize() {
     if (document.visibilityState !== 'visible') return;
     fit.fit();
