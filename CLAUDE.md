@@ -192,7 +192,7 @@ proxy, etc.) rather than into this codebase.
   returns the same string across every dirty rebuild — so plain `make` leaves
   the browser on the cached copy no matter how often you reload. Build with a
   unique version while the tree is dirty:
-  `make build VERSION="v0.5.1-dev$(date +%s)"` (or `make dev`). The WebSocket
+  `make build VERSION="v0.6.0-dev$(date +%s)"` (or `make dev`). The WebSocket
   auto-reconnect hides this: restarting roost respawns the server-side tmux
   clients, so everything looks fresh while the page keeps its old JavaScript.
   A fix that "didn't work" has usually not run yet.
