@@ -124,6 +124,7 @@ func NewManager(cfg Config) (*Manager, error) {
 		sessions:     map[string]*Session{},
 		stop:         make(chan struct{}),
 	}
+	m.pruneLogs()
 	go m.gcLoop()
 	return m, nil
 }
@@ -634,6 +635,82 @@ func (m *Manager) gcLoop() {
 	}
 }
 
+// pruneLogs deletes the logs of sessions whose shell is gone and which have
+// produced no output for LogRetention. Such a log is only scrollback of a
+// shell that no longer exists, and List() keeps offering it as a session to
+// reopen; left alone they accumulate for good. A session roost holds open, or
+// one tmux still runs, is never touched however old its output, because the
+// shell may still hold work.
+func (m *Manager) pruneLogs() {
+	if m.cfg.LogRetention <= 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	alive := func(id string) bool {
+		_, open := m.sessions[id]
+		return open || m.tmuxSessionExists(id)
+	}
+	for _, d := range staleLogs(m.cfg.LogDir, time.Now().Add(-m.cfg.LogRetention), alive) {
+		if err := removeLogFiles(filepath.Join(m.cfg.LogDir, d.id+".log")); err != nil {
+			log.Printf("prune log %s: %v", d.id, err)
+			continue
+		}
+		log.Printf("pruned log of ended session %s (last output %s, %d MB)",
+			d.id, d.lastOutput.Format("2006-01-02"), d.bytes>>20)
+	}
+}
+
+type deadLog struct {
+	id         string
+	lastOutput time.Time
+	bytes      int64
+}
+
+// staleLogs lists the logs in dir whose newest segment was last written
+// before cutoff and whose session alive reports as gone. A ".log.prev" with
+// no ".log" beside it is included under its id.
+func staleLogs(dir string, cutoff time.Time, alive func(id string) bool) []deadLog {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	byID := map[string]*deadLog{}
+	var order []string
+	for _, e := range entries {
+		name := e.Name()
+		id, ok := strings.CutSuffix(name, ".log.prev")
+		if !ok {
+			id, ok = strings.CutSuffix(name, ".log")
+		}
+		if !ok || e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		d := byID[id]
+		if d == nil {
+			d = &deadLog{id: id}
+			byID[id] = d
+			order = append(order, id)
+		}
+		d.bytes += info.Size()
+		if info.ModTime().After(d.lastOutput) {
+			d.lastOutput = info.ModTime()
+		}
+	}
+	var out []deadLog
+	for _, id := range order {
+		d := byID[id]
+		if d.lastOutput.Before(cutoff) && !alive(id) {
+			out = append(out, *d)
+		}
+	}
+	return out
+}
+
 func (m *Manager) gcOnce() {
 	cutoff := time.Now().Add(-m.cfg.IdleTTL)
 	m.mu.Lock()
@@ -653,4 +730,5 @@ func (m *Manager) gcOnce() {
 	for _, s := range victims {
 		s.Close()
 	}
+	m.pruneLogs()
 }

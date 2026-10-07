@@ -58,6 +58,11 @@ type Server struct {
 //                Default 64. Raised to twice ReplayKB if set lower, so a
 //                fresh attach always gets its full tail. Logs written
 //                before the cap existed are trimmed to it on next open.
+//   - LogRetentionDays : a session whose shell has ended (no tmux
+//                session left) has its log deleted this many days after
+//                its last output. Running sessions are never pruned.
+//                Default 30; 0 prunes as soon as the shell ends; -1
+//                keeps such logs forever.
 //   - ReplayKB : how many trailing KB of the log are sent to a client
 //                when it attaches. 0 means the default, 4096 (4 MB).
 //   - IdleTTL  : after the last client detaches, the session is closed
@@ -66,7 +71,10 @@ type Session struct {
 	LogDir   string `toml:"log_dir"`
 	ReplayKB int64  `toml:"replay_kb"`
 	LogMaxMB int64  `toml:"log_max_mb"`
-	IdleTTL  string `toml:"idle_ttl"`
+	// Pointer so that an explicit 0 ("prune as soon as the shell ends") is
+	// told apart from the key being absent.
+	LogRetentionDays *int64 `toml:"log_retention_days"`
+	IdleTTL          string `toml:"idle_ttl"`
 }
 
 func DefaultPath() string {
@@ -91,10 +99,11 @@ func defaultLogDir() string {
 // ResolvedSession returns the Session config with defaults filled in and
 // paths expanded.
 type ResolvedSession struct {
-	LogDir      string
-	ReplayBytes int64
-	LogMaxBytes int64
-	IdleTTL     time.Duration
+	LogDir       string
+	ReplayBytes  int64
+	LogMaxBytes  int64
+	LogRetention time.Duration // 0 keeps ended sessions' logs forever
+	IdleTTL      time.Duration
 }
 
 func (c *Config) ResolveSession() (*ResolvedSession, error) {
@@ -113,6 +122,20 @@ func (c *Config) ResolveSession() (*ResolvedSession, error) {
 	}
 	if out.LogMaxBytes <= 0 {
 		out.LogMaxBytes = 64 << 20
+	}
+	out.LogRetention = 30 * 24 * time.Hour
+	if d := c.Session.LogRetentionDays; d != nil {
+		switch {
+		case *d < 0:
+			out.LogRetention = 0
+		case *d == 0:
+			// Prune on the next GC pass after the shell ends. A zero
+			// duration means "disabled" downstream, so use the smallest
+			// positive one instead.
+			out.LogRetention = time.Nanosecond
+		default:
+			out.LogRetention = time.Duration(*d) * 24 * time.Hour
+		}
 	}
 	if c.Session.IdleTTL != "" {
 		d, err := time.ParseDuration(c.Session.IdleTTL)

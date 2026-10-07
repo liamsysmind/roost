@@ -205,8 +205,9 @@ func runServe(args []string) {
 	sm, err := session.NewManager(session.Config{
 		LogDir:      sessCfg.LogDir,
 		ReplayBytes: sessCfg.ReplayBytes,
-		LogMaxBytes: sessCfg.LogMaxBytes,
-		IdleTTL:     sessCfg.IdleTTL,
+		LogMaxBytes:  sessCfg.LogMaxBytes,
+		LogRetention: sessCfg.LogRetention,
+		IdleTTL:      sessCfg.IdleTTL,
 	})
 	if err != nil {
 		log.Fatal(err)

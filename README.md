@@ -251,6 +251,11 @@ replay_kb = 4096              # how many KB of the log to send on attach.
 log_max_mb = 64               # disk cap per session log; the oldest output
                               #   is deleted past it. Raised to 2× replay_kb
                               #   if lower. Older logs are trimmed at startup.
+log_retention_days = 30       # delete a session's log this many days after
+                              #   its last output, once its shell has ended
+                              #   (no tmux session). Running sessions are
+                              #   never pruned. 0 = as soon as the shell
+                              #   ends, -1 = keep forever.
 idle_ttl  = "24h"             # GC sessions with no clients after this idle.
                               #   tmux session survives even after GC.
 

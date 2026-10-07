@@ -107,7 +107,11 @@ proxy, etc.) rather than into this codebase.
   path.** Per-session `~/.local/share/roost/sessions/{id}.log` plus
   `{id}.log.prev`; when the newer segment fills, the older is deleted, so a
   session holds at most `log_max_mb` (default 64) on disk. Oversized logs
-  are trimmed to the cap at startup. Each client keeps a position in the log
+  are trimmed to the cap at startup (keeping their modification time). Logs
+  of sessions whose shell has ended — no tmux session left — are deleted
+  `log_retention_days` (default 30) after their last output, at startup and
+  on every GC pass; a running session's log is never pruned, since its shell
+  may still hold work. Each client keeps a position in the log
   and reads forward at its own pace — there is no per-client queue, so a
   slow tab falls behind instead of losing bytes. A queue that dropped on
   overflow used to remove line feeds mid-stream, and those lines never

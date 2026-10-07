@@ -121,6 +121,10 @@ func trimFile(path string, max int64) error {
 		_ = os.Remove(path + ".trim")
 		return fmt.Errorf("trim %s: %w", path, err)
 	}
+	// Keep the original modification time: it is when the session last
+	// produced output, which is what log retention measures. Trimming is not
+	// output, and resetting it would postpone every orphan's expiry.
+	_ = os.Chtimes(path+".trim", info.ModTime(), info.ModTime())
 	return os.Rename(path+".trim", path)
 }
 

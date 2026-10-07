@@ -36,11 +36,12 @@ type Session struct {
 
 // Config controls session creation defaults.
 type Config struct {
-	LogDir      string        // directory for per-session log files
-	ReplayBytes int64         // tail bytes sent on attach; <=0 means full log
-	LogMaxBytes int64         // disk cap per session log, across both segments
-	IdleTTL     time.Duration // close a session this long after the last client detaches
-	Shell       string        // override $SHELL
+	LogDir       string        // directory for per-session log files
+	ReplayBytes  int64         // tail bytes sent on attach; <=0 means full log
+	LogMaxBytes  int64         // disk cap per session log, across both segments
+	LogRetention time.Duration // delete a dead session's log this long after its last output; 0 keeps it
+	IdleTTL      time.Duration // close a session this long after the last client detaches
+	Shell        string        // override $SHELL
 }
 
 func newSession(id string, cfg Config, tmuxConfPath string, tmuxAlreadyExists bool) (*Session, error) {
