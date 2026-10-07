@@ -205,6 +205,7 @@ func runServe(args []string) {
 	sm, err := session.NewManager(session.Config{
 		LogDir:      sessCfg.LogDir,
 		ReplayBytes: sessCfg.ReplayBytes,
+		LogMaxBytes: sessCfg.LogMaxBytes,
 		IdleTTL:     sessCfg.IdleTTL,
 	})
 	if err != nil {
@@ -287,7 +288,8 @@ func runSetup(args []string) {
 		Session: config.Session{
 			// LogDir empty → resolves to $XDG_DATA_HOME/roost/sessions
 			// or ~/.local/share/roost/sessions.
-			ReplayKB: 4096, // 4 MB replay on attach; full log still on disk.
+			ReplayKB: 4096, // 4 MB replay on attach.
+			LogMaxMB: 64,   // per-session disk cap; older output is deleted.
 			IdleTTL:  "24h",
 		},
 	}

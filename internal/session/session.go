@@ -38,6 +38,7 @@ type Session struct {
 type Config struct {
 	LogDir      string        // directory for per-session log files
 	ReplayBytes int64         // tail bytes sent on attach; <=0 means full log
+	LogMaxBytes int64         // disk cap per session log, across both segments
 	IdleTTL     time.Duration // close a session this long after the last client detaches
 	Shell       string        // override $SHELL
 }
@@ -47,7 +48,7 @@ func newSession(id string, cfg Config, tmuxConfPath string, tmuxAlreadyExists bo
 		return nil, err
 	}
 	logPath := filepath.Join(cfg.LogDir, id+".log")
-	lg, err := openLog(logPath)
+	lg, err := openLog(logPath, cfg.segmentMax())
 	if err != nil {
 		return nil, err
 	}
@@ -142,24 +143,27 @@ func newSession(id string, cfg Config, tmuxConfPath string, tmuxAlreadyExists bo
 	return s, nil
 }
 
-// readLoop pumps PTY output → log → attached clients.
+// segmentMax is the size at which the log rotates. Half the cap, since two
+// segments are kept — but never less than ReplayBytes, so a fresh attach can
+// always be served its full tail.
+func (c Config) segmentMax() int64 {
+	seg := c.LogMaxBytes / 2
+	if seg <= 0 {
+		seg = defaultLogMaxBytes / 2
+	}
+	return max(seg, c.ReplayBytes)
+}
+
+const defaultLogMaxBytes = 64 << 20
+
+// readLoop pumps PTY output → log, then nudges attached clients to read it.
 func (s *Session) readLoop() {
 	defer close(s.done)
 	buf := make([]byte, 8192)
 	for {
 		n, err := s.tty.Read(buf)
 		if n > 0 {
-			chunk := make([]byte, n)
-			copy(chunk, buf[:n])
-			s.mu.Lock()
-			if _, werr := s.log.Write(chunk); werr != nil {
-				log.Printf("session %s: log write: %v", s.ID, werr)
-			}
-			for c := range s.clients {
-				c.send(chunk)
-			}
-			s.mu.Unlock()
-			s.lastOutput.Store(time.Now().UnixNano())
+			s.output(buf[:n])
 		}
 		if err != nil {
 			s.markClosed()
@@ -168,25 +172,35 @@ func (s *Session) readLoop() {
 	}
 }
 
-// Attach registers a client and stages the log tail for replay. Holding
-// the session mutex around snapshot+register ensures no live byte slips
-// between the snapshot and the moment broadcast starts seeing this client.
-// The replay buffer itself is streamed out by the client's WriteLoop in
-// small chunks so xterm.js can render progressively (see drainReplay) —
-// large scrollback no longer freezes the browser tab on attach.
-func (s *Session) Attach(c *Client) error {
+// output appends PTY bytes to the log and wakes every attached client.
+func (s *Session) output(b []byte) {
+	s.mu.Lock()
+	if _, err := s.log.Write(b); err != nil {
+		log.Printf("session %s: log write: %v", s.ID, err)
+	}
+	for c := range s.clients {
+		c.notify()
+	}
+	s.mu.Unlock()
+	s.lastOutput.Store(time.Now().UnixNano())
+}
+
+// Attach registers a client and computes its catch-up: the bytes after
+// `from` if the client holds an offset in this log's epoch, otherwise a reset
+// and the tail. Holding the session mutex around snapshot+register means the
+// snapshot's end and the client's live position are the same offset, so no
+// byte is skipped or sent twice between them.
+func (s *Session) Attach(c *Client, epoch string, from int64) error {
 	if s.IsClosed() {
 		return errors.New("session is closed")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	snap, err := s.log.Snapshot(s.cfg.ReplayBytes)
+	snap, err := s.log.Snapshot(epoch, from, s.cfg.ReplayBytes)
 	if err != nil {
 		return err
 	}
-	if len(snap) > 0 {
-		c.queueReplay(snap)
-	}
+	c.start(s.log, snap)
 	s.clients[c] = struct{}{}
 	return nil
 }
@@ -280,10 +294,7 @@ func (s *Session) Close() {
 	_ = s.log.Close()
 }
 
-// RemoveLog deletes the on-disk log file. Call only after Close.
+// RemoveLog deletes the on-disk log files. Call only after Close.
 func (s *Session) RemoveLog() error {
-	if s.logPath == "" {
-		return nil
-	}
-	return os.Remove(s.logPath)
+	return removeLogFiles(s.logPath)
 }

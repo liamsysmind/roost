@@ -1,73 +1,88 @@
 package session
 
 import (
-	"log"
+	"encoding/json"
+	"errors"
+	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
 
 // Client wraps a single WebSocket connection attached to a Session.
-// Output is queued through a buffered channel; a writer goroutine
-// drains the channel and writes to the connection.
+//
+// Output does not pass through a queue. The client holds a position in the
+// session's log and WriteLoop reads forward from it, so nothing is ever
+// dropped: a tab that cannot keep up falls behind, and the bytes wait on
+// disk. The session's read loop only nudges `wake` after each append.
+//
+// The previous design fanned chunks into a 64-deep channel per client and
+// discarded whatever did not fit. Under heavy output that silently removed
+// line feeds and cursor moves from the stream, so lines never reached the
+// browser's scrollback and the screen stayed corrupt until the next redraw.
 type Client struct {
 	conn *websocket.Conn
-	out  chan []byte
+	log  *Log
+	wake chan struct{} // capacity 1; a pending nudge is enough
 
-	// replay is scrollback handed to us by Attach; WriteLoop streams it
-	// out as small frames before draining live broadcast. Owned solely by
-	// WriteLoop after Attach returns — `go WriteLoop()` happens-after the
-	// queueReplay write, so no mutex is needed.
-	replay []byte
+	// Set by start before WriteLoop runs. WriteLoop releases snap.Data once
+	// sent; everything else here is read-only after start.
+	snap         Snapshot
+	catchupTotal int
+	pos          atomic.Int64 // next logical offset of live output to send
 
 	closeOnce sync.Once
 	closed    chan struct{}
 
-	dropped int // bytes dropped due to slow consumer (best-effort, racy is fine)
-}
+	// writeErr is why WriteLoop stopped, if a write failed. The handler reports
+	// it when the connection closes, so a disconnect caused by the outbound
+	// side is not mistaken for one the reader saw.
+	writeErr atomic.Pointer[error]
 
-const clientQueueDepth = 64
+	// Catch-up progress, for the close line.
+	replaySent   atomic.Int64
+	replayDoneAt atomic.Int64 // UnixNano; 0 until the catch-up has been sent
+}
 
 // NewClient wraps an upgraded WebSocket. Caller must invoke Close exactly once.
 func NewClient(conn *websocket.Conn) *Client {
 	return &Client{
 		conn:   conn,
-		out:    make(chan []byte, clientQueueDepth),
+		wake:   make(chan struct{}, 1),
 		closed: make(chan struct{}),
 	}
 }
 
-// send queues data for delivery. If the queue is full, drops the chunk
-// rather than blocking the producer (the broadcaster). A slow tab will
-// fall behind and see drops in their output — accepted trade-off vs
-// blocking everyone else.
-func (c *Client) send(b []byte) {
+// start records what Attach computed. Must be called before WriteLoop.
+func (c *Client) start(l *Log, snap Snapshot) {
+	c.log = l
+	c.snap = snap
+	c.catchupTotal = len(snap.Data)
+	c.pos.Store(snap.LiveFrom)
+}
+
+// notify tells WriteLoop the log has grown. Never blocks the session.
+func (c *Client) notify() {
 	select {
-	case c.out <- b:
-	case <-c.closed:
+	case c.wake <- struct{}{}:
 	default:
-		// Slow consumer.
-		c.dropped += len(b)
 	}
 }
 
-// queueReplay records scrollback to be streamed out by WriteLoop before any
-// live broadcast. Caller (Session.Attach) holds the session mutex while
-// calling this and while adding the client to the broadcast set, which is
-// what keeps replay-then-live ordering intact. Must be called at most once,
-// before WriteLoop is started.
-func (c *Client) queueReplay(b []byte) {
-	c.replay = b
+// Lag is how many bytes of live output this client has not been sent yet.
+func (c *Client) Lag() int64 {
+	if c.log == nil {
+		return 0
+	}
+	return c.log.End() - c.pos.Load()
 }
 
-// replayChunkSize bounds each scrollback frame. xterm.js parses incoming
-// data on the main thread; a single multi-MB frame freezes the tab until
-// parsing finishes, with no opportunity to repaint. Splitting into ~64 KB
-// frames lets the browser interleave parsing with rendering so the user
-// sees the terminal fill in progressively instead of staring at a blank
-// page.
-const replayChunkSize = 64 * 1024
+// frameSize bounds each binary frame. xterm.js parses incoming data on the
+// main thread; a single multi-MB frame freezes the tab until parsing
+// finishes, with no opportunity to repaint.
+const frameSize = 64 * 1024
 
 // pingInterval is how often we send a WS ping frame to keep idle proxies
 // (notably Cloudflare's ~100s WebSocket idle timeout) from dropping the
@@ -80,37 +95,119 @@ var pingInterval = 30 * time.Second
 // pongWait is how long a connection may go without a single frame from the
 // client before it is treated as dead. Without it, a connection that died at
 // the transport layer — a phone that slept, a Wi-Fi handover, a tunnel that
-// went away — leaves ReadMessage blocked indefinitely: roost keeps the client
-// in the broadcast set and goes on queueing output at it until the OS TCP
-// keepalive gives up, which on macOS is about two hours. The "dropped N bytes"
-// line then reports a disconnection that happened long before, which makes the
-// log useless for working out when the connection actually failed.
+// went away — leaves ReadMessage blocked indefinitely until the OS TCP
+// keepalive gives up, which on macOS is about two hours.
+//
+// A tab that is alive but not reading — Chrome throttles hidden tabs — also
+// runs into this. That costs nothing now: the bytes stay in the log and the
+// tab resumes from its position when it reconnects.
 //
 // Comfortably over two ping intervals, so one lost ping or pong does not tear
 // down a healthy connection.
 var pongWait = 70 * time.Second
 
-// WriteLoop pumps the out channel to the WebSocket until Close is called
-// or the connection errors out. Also drives a ping ticker so connections
-// behind idle-timing proxies stay alive. If Attach handed us scrollback
-// via queueReplay, that is streamed out in chunks first.
-func (c *Client) WriteLoop() {
-	if !c.drainReplay() {
-		return
+// control is a text frame. The browser tells these apart from the plain-text
+// error messages by the "roost" key.
+type control struct {
+	Kind  string `json:"roost"`
+	Epoch string `json:"epoch,omitempty"`
+	Pos   int64  `json:"pos,omitempty"`
+	Reset bool   `json:"reset,omitempty"`
+}
+
+func (c *Client) writeControl(m control) error {
+	b, _ := json.Marshal(m)
+	return c.write(websocket.TextMessage, b)
+}
+
+func (c *Client) write(mt int, b []byte) error {
+	if err := c.conn.WriteMessage(mt, b); err != nil {
+		c.writeErr.Store(&err)
+		return err
 	}
+	return nil
+}
+
+// WriteLoop sends the catch-up computed by Attach, then follows the log until
+// Close is called or the connection errors out.
+//
+// Protocol, in order:
+//
+//	{"roost":"start","epoch":E,"reset":R}  clear the terminal first if R
+//	binary frames                          catch-up, queries stripped
+//	{"roost":"live","pos":P}               the client now holds everything before P
+//	binary frames                          live output; each byte advances P
+//	{"roost":"hb"}                         every pingInterval, so the browser
+//	                                       can tell a silent shell from a dead socket
+//
+// Pings go out between frames, catch-up included. Previously they started only
+// after the replay drained, so a tab slow to read 4 MB of replay got no ping,
+// sent no pong, and was disconnected as dead after pongWait.
+func (c *Client) WriteLoop() {
 	t := time.NewTicker(pingInterval)
 	defer t.Stop()
-	for {
+	heartbeat := func() error {
+		if err := c.write(websocket.PingMessage, nil); err != nil {
+			return err
+		}
+		return c.writeControl(control{Kind: "hb"})
+	}
+	// tick sends a heartbeat if one is due, without waiting.
+	tick := func() error {
 		select {
-		case b, ok := <-c.out:
-			if !ok {
-				return
-			}
-			if err := c.conn.WriteMessage(websocket.BinaryMessage, b); err != nil {
-				return
-			}
 		case <-t.C:
-			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+			return heartbeat()
+		default:
+			return nil
+		}
+	}
+
+	if c.writeControl(control{Kind: "start", Epoch: c.log.Epoch(), Reset: c.snap.Reset}) != nil {
+		return
+	}
+	for data := c.snap.Data; len(data) > 0; {
+		select {
+		case <-c.closed:
+			return
+		default:
+		}
+		n := min(frameSize, len(data))
+		if c.write(websocket.BinaryMessage, data[:n]) != nil || tick() != nil {
+			return
+		}
+		data = data[n:]
+		c.replaySent.Add(int64(n))
+	}
+	c.snap.Data = nil
+	if c.writeControl(control{Kind: "live", Pos: c.pos.Load()}) != nil {
+		return
+	}
+	c.replayDoneAt.Store(time.Now().UnixNano())
+
+	buf := make([]byte, frameSize)
+	for {
+		n, err := c.log.ReadAt(buf, c.pos.Load())
+		switch {
+		case n > 0:
+			if c.write(websocket.BinaryMessage, buf[:n]) != nil || tick() != nil {
+				return
+			}
+			c.pos.Add(int64(n))
+			continue
+		case errors.Is(err, ErrTooOld):
+			// Rotated past this client while it was not reading. Closing makes
+			// it reconnect from its position, which Attach answers with a reset
+			// and the tail — the same as a fresh tab.
+			c.closeWith(4001, "fell behind")
+			return
+		case err != nil && !errors.Is(err, io.EOF):
+			c.writeErr.Store(&err)
+			return
+		}
+		select {
+		case <-c.wake:
+		case <-t.C:
+			if heartbeat() != nil {
 				return
 			}
 		case <-c.closed:
@@ -119,39 +216,14 @@ func (c *Client) WriteLoop() {
 	}
 }
 
-// drainReplay streams the queued scrollback as chunked binary frames.
-// Returns false if the connection died or the client was closed mid-way,
-// in which case the caller (WriteLoop) should bail. Live bytes that arrive
-// during replay queue up in c.out and are delivered immediately after.
-func (c *Client) drainReplay() bool {
-	for len(c.replay) > 0 {
-		select {
-		case <-c.closed:
-			return false
-		default:
-		}
-		n := replayChunkSize
-		if n > len(c.replay) {
-			n = len(c.replay)
-		}
-		if err := c.conn.WriteMessage(websocket.BinaryMessage, c.replay[:n]); err != nil {
-			return false
-		}
-		c.replay = c.replay[n:]
-	}
-	c.replay = nil
-	return true
-}
-
 // closeWith sends a WebSocket close frame and signals the writer to stop.
+// Safe to call from any goroutine: WriteControl may run concurrently with
+// WriteMessage, which WriteMessage(CloseMessage) may not.
 func (c *Client) closeWith(code int, reason string) {
 	c.closeOnce.Do(func() {
-		_ = c.conn.WriteMessage(websocket.CloseMessage,
-			websocket.FormatCloseMessage(code, reason))
+		_ = c.conn.WriteControl(websocket.CloseMessage,
+			websocket.FormatCloseMessage(code, reason), time.Now().Add(time.Second))
 		close(c.closed)
-		if c.dropped > 0 {
-			log.Printf("client: dropped %d bytes due to slow consumer", c.dropped)
-		}
 	})
 }
 
@@ -159,8 +231,5 @@ func (c *Client) closeWith(code int, reason string) {
 func (c *Client) Close() {
 	c.closeOnce.Do(func() {
 		close(c.closed)
-		if c.dropped > 0 {
-			log.Printf("client: dropped %d bytes due to slow consumer", c.dropped)
-		}
 	})
 }

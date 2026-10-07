@@ -620,8 +620,21 @@
   // do with a name it has never seen: made a new session, and a new tmux
   // session, under the name that was supposed to be gone.
   function wsURL() {
-    return `${wsProto}//${location.host}/ws/terminal/${encodeURIComponent(sessionID)}`;
+    const base = `${wsProto}//${location.host}/ws/terminal/${encodeURIComponent(sessionID)}`;
+    if (logEpoch === null || logPos === null) return base;
+    return `${base}?epoch=${encodeURIComponent(logEpoch)}&from=${logPos}`;
   }
+
+  // Where this terminal is in the session's log. The server streams the log
+  // from a position rather than pushing into a queue that drops on overflow,
+  // so a reconnect names the position and is sent only what it missed — not
+  // the 4 MB tail again, appended under what was already on screen. logPos is
+  // null until the server's "live" frame says where live output starts; the
+  // catch-up before it has terminal queries stripped, so its byte count does
+  // not match the log's.
+  let logEpoch = null;
+  let logPos = null;
+  let lastFrameAt = Date.now();
 
   // Auto-reconnect: transport-level WS drops are inevitable on long-lived
   // connections (laptop sleep, WiFi roam, SSH tunnel reconnect, Chrome
@@ -635,6 +648,32 @@
   let reconnectAttempt = 0;
   let reconnectTimer = null;
   let gaveUp = false;
+  let reconnectToast = false;
+  let reconnectToastTimer = null;
+
+  // How the last socket ended, as only the browser can see it: the close code,
+  // whether the tab was hidden or had been frozen. Sent to the server after the
+  // next successful connect so the server log holds both sides of a disconnect.
+  let lastClose = null;
+  let openedAt = Date.now();
+  // A frozen page delivers its close event only after it resumes, so record
+  // the freeze itself and report it relative to the close.
+  let lastFreeze = null;
+  document.addEventListener('freeze', () => { lastFreeze = { at: Date.now(), ms: null }; });
+  document.addEventListener('resume', () => { if (lastFreeze) lastFreeze.ms = Date.now() - lastFreeze.at; });
+
+  // Keep the first close of an outage; failed redials that follow it would
+  // otherwise overwrite the code that explains the outage.
+  function recordClose(code, clean) {
+    if (lastClose) return;
+    lastClose = {
+      code, clean, vis: document.visibilityState,
+      online: navigator.onLine, at: Date.now(), lived: (Date.now() - openedAt) / 1000,
+      freeze: lastFreeze && lastFreeze.at >= openedAt
+        ? `${lastFreeze.ms === null ? 'ongoing' : (lastFreeze.ms / 1000).toFixed(1) + 's'}`
+        : 'none',
+    };
+  }
 
   function connect() {
     reconnectTimer = null;
@@ -642,23 +681,49 @@
     ws.binaryType = 'arraybuffer';
 
     ws.onopen = () => {
-      if (reconnectAttempt > 0) {
-        term.writeln(`\r\n\x1b[32m[roost] reconnected\x1b[0m`);
+      if (reconnectToast) {
+        reconnectToast = false;
+        window.toast && window.toast('Reconnected', 'ok');
       }
+      clearTimeout(reconnectToastTimer);
+      lastFrameAt = Date.now();
+      if (lastClose) {
+        const c = lastClose;
+        ws.send(`note prev_close code=${c.code} clean=${c.clean} vis=${c.vis} online=${c.online}` +
+          ` freeze=${c.freeze} down=${((Date.now() - c.at) / 1000).toFixed(1)}s` +
+          ` attempts=${reconnectAttempt} lived=${c.lived.toFixed(0)}s`);
+        lastClose = null;
+      }
+      openedAt = Date.now();
       reconnectAttempt = 0;
       sendResize();
       term.focus();
     };
 
     ws.onmessage = (ev) => {
+      lastFrameAt = Date.now();
       if (typeof ev.data === 'string') {
+        let msg = null;
+        try { msg = JSON.parse(ev.data); } catch (_) {}
+        if (msg && typeof msg.roost === 'string') {
+          if (msg.roost === 'start') {
+            logEpoch = msg.epoch;
+            logPos = null;
+            if (msg.reset) term.reset();
+          } else if (msg.roost === 'live') {
+            logPos = msg.pos || 0;
+          }
+          return;
+        }
         term.writeln(`\r\n\x1b[33m[roost] ${ev.data}\x1b[0m`);
         return;
       }
       term.write(new Uint8Array(ev.data));
+      if (logPos !== null) logPos += ev.data.byteLength;
     };
 
     ws.onclose = (ev) => {
+      recordClose(ev.code, ev.wasClean);
       // Shell-exited is terminal — reconnecting would silently spawn a fresh
       // shell with no history, which is more confusing than a clear message.
       if (ev.code === 1000 && ev.reason) {
@@ -666,8 +731,16 @@
         gaveUp = true;
         return;
       }
+      // Status goes to a toast, never into the terminal: a resume continues
+      // the byte stream exactly where it stopped, and text written locally
+      // in between would leave the screen out of step with tmux's.
       if (reconnectAttempt === 0) {
-        term.writeln(`\r\n\x1b[33m[roost] disconnected, reconnecting…\x1b[0m`);
+        clearTimeout(reconnectToastTimer);
+        reconnectToastTimer = setTimeout(() => {
+          if (ws && ws.readyState === WebSocket.OPEN) return;
+          reconnectToast = true;
+          window.toast && window.toast('Disconnected, reconnecting…', 'info');
+        }, 3000);
       }
       scheduleReconnect();
     };
@@ -692,6 +765,28 @@
     }
     connect();
   });
+
+  // The browser can sit on a dead socket for a long time: a hidden tab that
+  // stopped reading never sees the server give up on it, and in one observed
+  // case learned of the close 25 minutes later. The server sends a heartbeat
+  // frame every 30s, so a visible tab that has heard nothing for longer than
+  // the server's own 70s limit drops the socket and resumes from its position.
+  const STALE_MS = 75000;
+  function checkStale() {
+    if (document.visibilityState !== 'visible' || gaveUp) return;
+    if (ws && ws.readyState === WebSocket.OPEN && Date.now() - lastFrameAt > STALE_MS) {
+      // Abandon rather than wait for close(): on a dead connection the closing
+      // handshake itself has to time out before onclose fires.
+      const old = ws;
+      old.onopen = old.onmessage = old.onclose = old.onerror = null;
+      try { old.close(); } catch (_) {}
+      recordClose('stale', false);
+      connect();
+    }
+  }
+  document.addEventListener('visibilitychange', checkStale);
+  window.addEventListener('focus', checkStale);
+  setInterval(checkStale, 15000);
 
   const encoder = new TextEncoder();
   term.onData((data) => {

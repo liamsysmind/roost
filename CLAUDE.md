@@ -13,9 +13,9 @@ internal/
   auth/        # bcrypt + cookie session middleware
   config/      # TOML loader (~/.config/roost/config.toml)
   session/     # tmux-backed PTY sessions
-    log.go        # append-only disk log per session (unbounded scrollback)
+    log.go        # two-segment disk log per session, capped by log_max_mb
     session.go    # Session: owns PTY+log, broadcasts to attached clients
-    client.go     # Client: WS conn + buffered out queue (drops slow consumers)
+    client.go     # Client: WS conn streaming from its own log position
     manager.go    # Manager: GetOrCreate / Rename / Delete / PaneInfo / GC loop
     handler.go    # GET /ws/terminal[/{id}] WebSocket handler
   fs/          # rooted filesystem API
@@ -103,11 +103,23 @@ proxy, etc.) rather than into this codebase.
   xterm.js implements per spec by DROPPING the scrolled lines. Apps that use
   alt-screen themselves (vim, less) still work — tmux translates. See the
   comment block above `roostTmuxConf` before touching any of these.
-- **Disk log is the source of truth for scrollback.** Per-session
-  `~/.local/share/roost/sessions/{id}.log` is append-only and effectively
-  unbounded. `replay_kb` only caps how much of the tail is replayed on attach.
+- **Disk log is the source of truth for scrollback, and the only output
+  path.** Per-session `~/.local/share/roost/sessions/{id}.log` plus
+  `{id}.log.prev`; when the newer segment fills, the older is deleted, so a
+  session holds at most `log_max_mb` (default 64) on disk. Oversized logs
+  are trimmed to the cap at startup. Each client keeps a position in the log
+  and reads forward at its own pace — there is no per-client queue, so a
+  slow tab falls behind instead of losing bytes. A queue that dropped on
+  overflow used to remove line feeds mid-stream, and those lines never
+  reached the browser's scrollback.
+- **Reconnects resume.** The browser sends `?epoch=&from=` with its log
+  position and gets only what it missed. Another epoch (roost restarted), a
+  position rotated out, or a gap over `replay_kb` gets a terminal reset plus
+  the tail instead. Connection status goes to a toast, never into the
+  terminal: a resumed stream continues byte for byte, and locally written
+  text would put the screen out of step with tmux.
 - **Multi-tab broadcast.** Two browser tabs on the same `/s/{id}` see the
-  same screen; bytes are fanned out to every attached client.
+  same screen; each follows the same log.
 - **Path traversal is rejected at API boundary.** `fs.API.resolve()` keeps
   every operation under `Root` (default $HOME). Session IDs are validated
   against `[A-Za-z0-9._-]{1,128}` before touching disk.
@@ -194,11 +206,16 @@ proxy, etc.) rather than into this codebase.
 ## Testing
 
 `go test ./...` covers the parts where a wrong answer is silent rather than
-loud. All three are table-driven; follow the pattern when adding more:
+loud. Prefer table-driven tests when adding more:
 
 - `internal/fs/fs_test.go` — path-traversal containment
 - `internal/ai/filter_test.go` — which JSONL entries count as a human prompt
 - `internal/session/lastused_test.go` — last-input vs. last-output ordering
+- `internal/session/log_test.go` — rotation, offsets, trim, resume-or-reset
+- `internal/session/stream_test.go` — no bytes lost to a tab that stops
+  reading; a reconnect gets exactly what it missed
+- `internal/session/liveness_test.go` — a silent peer is detached, a quiet
+  one is not
 
 There is no HTTP-level test suite; those paths are still smoke-tested by hand:
 

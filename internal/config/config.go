@@ -51,18 +51,21 @@ type Server struct {
 
 // Session configures persistent terminal sessions.
 //
-//   - LogDir   : where per-session output logs are stored. The log file
-//                is append-only and effectively unbounded — your full
-//                scrollback persists across reconnects until you delete
-//                the file.
+//   - LogDir   : where per-session output logs are stored. Each log is
+//                kept as two segments ({id}.log and {id}.log.prev); when
+//                the newer fills, the older is deleted.
+//   - LogMaxMB : disk cap per session log, both segments together.
+//                Default 64. Raised to twice ReplayKB if set lower, so a
+//                fresh attach always gets its full tail. Logs written
+//                before the cap existed are trimmed to it on next open.
 //   - ReplayKB : how many trailing KB of the log are sent to a client
-//                when it attaches. 0 means "send the whole log".
-//                Default 4096 (4 MB).
+//                when it attaches. 0 means the default, 4096 (4 MB).
 //   - IdleTTL  : after the last client detaches, the session is closed
 //                if it stays idle this long. "0" disables auto-close.
 type Session struct {
 	LogDir   string `toml:"log_dir"`
 	ReplayKB int64  `toml:"replay_kb"`
+	LogMaxMB int64  `toml:"log_max_mb"`
 	IdleTTL  string `toml:"idle_ttl"`
 }
 
@@ -90,6 +93,7 @@ func defaultLogDir() string {
 type ResolvedSession struct {
 	LogDir      string
 	ReplayBytes int64
+	LogMaxBytes int64
 	IdleTTL     time.Duration
 }
 
@@ -97,6 +101,7 @@ func (c *Config) ResolveSession() (*ResolvedSession, error) {
 	out := &ResolvedSession{
 		LogDir:      c.Session.LogDir,
 		ReplayBytes: c.Session.ReplayKB * 1024,
+		LogMaxBytes: c.Session.LogMaxMB << 20,
 		IdleTTL:     24 * time.Hour,
 	}
 	if out.LogDir == "" {
@@ -105,6 +110,9 @@ func (c *Config) ResolveSession() (*ResolvedSession, error) {
 	out.LogDir = expandHome(out.LogDir)
 	if c.Session.ReplayKB == 0 {
 		out.ReplayBytes = 4 * 1024 * 1024
+	}
+	if out.LogMaxBytes <= 0 {
+		out.LogMaxBytes = 64 << 20
 	}
 	if c.Session.IdleTTL != "" {
 		d, err := time.ParseDuration(c.Session.IdleTTL)

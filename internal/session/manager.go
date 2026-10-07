@@ -3,6 +3,7 @@ package session
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -116,6 +117,7 @@ func NewManager(cfg Config) (*Manager, error) {
 	// affect freshly-spawned tmux servers — existing sessions would keep using
 	// the obsolete settings for the rest of their lifetime.
 	_ = exec.Command("tmux", "source-file", confPath).Run()
+	trimLogDir(cfg.LogDir, cfg.segmentMax())
 	m := &Manager{
 		cfg:          cfg,
 		tmuxConfPath: confPath,
@@ -169,6 +171,31 @@ func sweepLegacyTmuxConfs(dir, keep string) {
 			continue
 		}
 		_ = os.Remove(full)
+	}
+}
+
+// trimLogDir brings every log in dir under the per-segment cap, including
+// those of sessions nobody has reopened. Run before any session opens its
+// log, so no file is trimmed while it is being written.
+func trimLogDir(dir string, segMax int64) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !(strings.HasSuffix(name, ".log") || strings.HasSuffix(name, ".log.prev")) {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || info.Size() <= segMax {
+			continue
+		}
+		if err := trimFile(filepath.Join(dir, name), segMax); err != nil {
+			log.Printf("trim log: %v", err)
+			continue
+		}
+		log.Printf("trimmed %s from %d MB to %d MB", name, info.Size()>>20, segMax>>20)
 	}
 }
 
@@ -527,7 +554,7 @@ func (m *Manager) Rename(oldID, newID string) error {
 
 	if s, ok := m.sessions[oldID]; ok {
 		// Live session — rename log and re-key the map.
-		if err := os.Rename(s.logPath, newLog); err != nil && !os.IsNotExist(err) {
+		if err := s.log.Rename(newLog); err != nil {
 			return fmt.Errorf("rename log: %w", err)
 		}
 		s.ID = newID
@@ -537,12 +564,15 @@ func (m *Manager) Rename(oldID, newID string) error {
 		return nil
 	}
 
-	// Orphan log on disk — just rename the file.
+	// Orphan log on disk — just rename the files.
 	oldLog := filepath.Join(m.cfg.LogDir, oldID+".log")
 	if err := os.Rename(oldLog, newLog); err != nil {
 		if os.IsNotExist(err) {
 			return errors.New("session not found")
 		}
+		return fmt.Errorf("rename log: %w", err)
+	}
+	if err := os.Rename(prevPath(oldLog), prevPath(newLog)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("rename log: %w", err)
 	}
 	return nil
@@ -566,11 +596,7 @@ func (m *Manager) Delete(id string) error {
 		return s.RemoveLog()
 	}
 	// No live session — still try to remove a stale log file if any.
-	stale := filepath.Join(m.cfg.LogDir, id+".log")
-	if err := os.Remove(stale); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
+	return removeLogFiles(filepath.Join(m.cfg.LogDir, id+".log"))
 }
 
 // Shutdown disconnects every active client and closes our PTY wrappers.

@@ -147,7 +147,7 @@ shell. Each session is a separate URL like `/s/zephyr-build`, so:
 ### Terminal
 
 A full xterm.js terminal with a 100K-line in-browser scrollback buffer
-and an effectively unbounded on-disk session log that's replayed when
+and an on-disk session log (capped by `log_max_mb`) that's replayed when
 you reattach — closing your laptop and coming back the next morning
 still shows the conversation. Rendering uses xterm.js's DOM renderer,
 not WebGL: the GPU atlas renderer draws every glyph from a single font
@@ -245,7 +245,12 @@ addr = "127.0.0.1:8080"       # bind here; SSH tunnel into it
 log_dir   = ""                # default: $XDG_DATA_HOME/roost/sessions
                               #   or ~/.local/share/roost/sessions
 replay_kb = 4096              # how many KB of the log to send on attach.
-                              #   0 = full log (effectively unbounded)
+                              #   0 = the default, 4096.
+                              #   A reconnecting tab is sent only what it
+                              #   missed, unless that is more than this.
+log_max_mb = 64               # disk cap per session log; the oldest output
+                              #   is deleted past it. Raised to 2× replay_kb
+                              #   if lower. Older logs are trimmed at startup.
 idle_ttl  = "24h"             # GC sessions with no clients after this idle.
                               #   tmux session survives even after GC.
 
